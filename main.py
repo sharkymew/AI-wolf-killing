@@ -24,7 +24,8 @@ def start(
         config.game.max_turns = rounds
         
         engine = GameEngine(config)
-        engine.run()
+        import asyncio
+        asyncio.run(engine.run())
         
     except Exception as e:
         game_logger.error(f"Game Error: {e}")

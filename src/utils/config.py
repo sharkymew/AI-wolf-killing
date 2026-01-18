@@ -21,6 +21,7 @@ class RoleConfig(BaseModel):
 class GameConfig(BaseModel):
     roles: RoleConfig = RoleConfig()
     max_turns: int = 50
+    memory_retention_turns: int = 10 # Keep last N turns of memory
 
 class AppConfig(BaseModel):
     models: List[ModelConfig]

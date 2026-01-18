@@ -1,25 +1,28 @@
-import json
-from datetime import datetime
-import random
+import asyncio
 import time
+import json
+import random
+from datetime import datetime
 from typing import List, Dict, Optional, Tuple, cast
-from src.core.player import Player
-from src.core.role import RoleType, Werewolf, Witch, Seer, Villager, Faction
 from src.utils.config import AppConfig
+from src.core.player import Player
+from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Villager
 from src.llm.client import LLMClient
 from src.llm.mock_client import MockLLMClient
 from src.utils.logger import game_logger
 
 class GameEngine:
     def __init__(self, config: AppConfig):
+        # ... (same as before) ...
         self.config = config
         self.players: Dict[int, Player] = {}
         self.turn = 1
         self.game_over = False
         self.winner = None
         self.history: List[Dict] = []
-        self.public_facts: List[str] = [] # Stores confirmed info (e.g. dead player roles)
+        self.public_facts: List[str] = []
 
+    # ... (log_event, save_replay, initialize_game, get_alive_players, check_win_condition, broadcast stay same) ...
     def log_event(self, event_type: str, data: Dict):
         event = {
             "turn": self.turn,
@@ -119,7 +122,12 @@ class GameEngine:
             
         return False
 
-    def run(self):
+    def broadcast(self, message: str):
+        for p in self.players.values():
+            if p.is_alive:
+                p.receive_message(message)
+
+    async def run(self):
         self.initialize_game()
         
         while not self.game_over:
@@ -127,12 +135,12 @@ class GameEngine:
             self.log_event("phase_start", {"phase": "night", "turn": self.turn})
             
             # Night Phase
-            dead_at_night = self.run_night_phase()
+            dead_at_night = await self.run_night_phase()
             self.log_event("night_result", {"dead": dead_at_night})
             
             # Day Phase
             self.log_event("phase_start", {"phase": "day", "turn": self.turn})
-            self.run_day_phase(dead_at_night)
+            await self.run_day_phase(dead_at_night)
             
             self.turn += 1
             if self.turn > self.config.game.max_turns:
@@ -144,17 +152,17 @@ class GameEngine:
         self.log_event("game_over", {"winner": self.winner})
         self.save_replay()
 
-    def run_night_phase(self) -> List[int]:
+    async def run_night_phase(self) -> List[int]:
         game_logger.log("\n天黑请闭眼...", "blue")
         
         # 1. Werewolf Action
-        target_id = self._werewolf_action()
+        target_id = await self._werewolf_action()
         
         # 2. Witch Action
-        save_id, poison_id = self._witch_action(target_id)
+        save_id, poison_id = await self._witch_action(target_id)
         
         # 3. Seer Action
-        self._seer_action()
+        await self._seer_action()
         
         # Calculate deaths
         dead = []
@@ -166,7 +174,7 @@ class GameEngine:
         # Remove duplicates
         return list(set(dead))
 
-    def _werewolf_action(self) -> Optional[int]:
+    async def _werewolf_action(self) -> Optional[int]:
         wolves = [p for p in self.players.values() if p.is_alive and p.role.type == RoleType.WEREWOLF]
         if not wolves:
             return None
@@ -187,22 +195,35 @@ class GameEngine:
         max_rounds = 3
         votes = {} # Initialize outside loop
         
-        # Initial blind vote
-        for wolf in wolves:
+        # Initial blind vote - Parallelize this?
+        # Blind vote is independent, so yes.
+        # But we need to map responses back to wolves.
+        
+        async def ask_wolf(wolf, prompt):
             try:
-                # Add specific advice about self-kill
-                advice = (
-                    "你可以选择攻击包括自己在内的任何存活玩家。\n"
-                    "注意：自杀（攻击狼人队友）是一种高风险高回报的战术，通常用于骗取女巫解药或混淆视听。\n"
-                    "请慎重选择，除非有明确战术目的，否则建议优先攻击好人。"
-                )
-                prompt = f"狼人杀人（第1轮盲选）\n{advice}"
-                resp = wolf.act(prompt, valid_targets)
+                resp = await wolf.act(prompt, valid_targets)
                 target = int(resp)
                 if target in valid_targets:
-                    votes[wolf.player_id] = target
+                    return wolf.player_id, target
             except:
-                continue
+                pass
+            return wolf.player_id, None
+
+        # Add specific advice about self-kill
+        advice = (
+            "你可以选择攻击包括自己在内的任何存活玩家。\n"
+            "注意：自杀（攻击狼人队友）是一种高风险高回报的战术，通常用于骗取女巫解药或混淆视听。\n"
+            "请慎重选择，除非有明确战术目的，否则建议优先攻击好人。"
+        )
+        prompt = f"狼人杀人（第1轮盲选）\n{advice}"
+        
+        # Run parallel
+        tasks = [ask_wolf(w, prompt) for w in wolves]
+        results = await asyncio.gather(*tasks)
+        
+        for pid, target in results:
+            if target is not None:
+                votes[pid] = target
                 
         # Check initial consensus
         target_counts = {}
@@ -215,7 +236,7 @@ class GameEngine:
             game_logger.log(f"狼人达成一致，锁定了目标 {final_target}。", "red")
             return final_target
             
-        # If mismatch, enter sequential negotiation
+        # If mismatch, enter sequential negotiation (Sequential logic preserved for negotiation)
         game_logger.log(f"狼人意见不统一 {votes}，进入协商...", "yellow")
         
         for round_idx in range(max_rounds):
@@ -245,7 +266,7 @@ class GameEngine:
                 )
                 
                 try:
-                    resp = wolf.act(f"狼人杀人（协商第{round_idx+1}轮）\n{prompt_prefix}", valid_targets)
+                    resp = await wolf.act(f"狼人杀人（协商第{round_idx+1}轮）\n{prompt_prefix}", valid_targets)
                     target = int(resp)
                     if target in valid_targets:
                         current_round_votes[wolf.player_id] = target
@@ -276,7 +297,8 @@ class GameEngine:
         target = max(set(final_votes), key=final_votes.count)
         game_logger.log(f"狼人协商超时，强制锁定多数票目标 {target}。", "red")
         return target
-    def _witch_action(self, night_death_id: Optional[int]) -> Tuple[Optional[int], Optional[int]]:
+
+    async def _witch_action(self, night_death_id: Optional[int]) -> Tuple[Optional[int], Optional[int]]:
         witch = next((p for p in self.players.values() if p.role.type == RoleType.WITCH), None)
         if not witch or not witch.is_alive:
             return None, None
@@ -292,17 +314,10 @@ class GameEngine:
             try:
                 # Tell witch who died
                 witch.receive_message(f"今晚死的是 {night_death_id} 号玩家。是否使用解药？(回答 'yes' 或 'no')")
-                # For simplicity, reuse act or simple LLM call. 
-                # Let's use act but prompt differently or just parse logic.
-                # Actually, let's use a specific logic or prompt.
-                # Here we use a direct logic simulation for now or simplified prompt.
-                # Let's trust the player agent's `act` method handles generic "options".
-                # But `act` asks for ID.
-                # Let's allow `act` to be flexible.
                 
                 # We'll ask to save:
                 msg = f"今晚 {night_death_id} 号玩家被杀了。你有一瓶解药。输入 {night_death_id} 使用解药，输入 -1 不使用。"
-                resp = witch.act("女巫解药", [night_death_id, -1])
+                resp = await witch.act("女巫解药", [night_death_id, -1])
                 if int(resp) == night_death_id:
                     save_target = night_death_id
                     witch_role.has_antidote = False
@@ -315,7 +330,7 @@ class GameEngine:
             alive_ids = self.get_alive_players()
             alive_ids.remove(witch.player_id) # Don't poison self usually
             try:
-                resp = witch.act("女巫毒药", alive_ids + [-1])
+                resp = await witch.act("女巫毒药", alive_ids + [-1])
                 target = int(resp)
                 if target in alive_ids:
                     poison_target = target
@@ -325,7 +340,7 @@ class GameEngine:
                 
         return save_target, poison_target
 
-    def _seer_action(self):
+    async def _seer_action(self):
         seer = next((p for p in self.players.values() if p.role.type == RoleType.SEER), None)
         if not seer or not seer.is_alive:
             return
@@ -335,7 +350,7 @@ class GameEngine:
         alive_ids.remove(seer.player_id)
         
         try:
-            resp = seer.act("预言家查验", alive_ids)
+            resp = await seer.act("预言家查验", alive_ids)
             target_id = int(resp)
             if target_id in alive_ids:
                 target_p = self.players[target_id]
@@ -344,7 +359,7 @@ class GameEngine:
         except:
             pass
 
-    def run_day_phase(self, dead_ids: List[int]):
+    async def run_day_phase(self, dead_ids: List[int]):
         game_logger.log("\n天亮了。", "blue")
         
         # Announcement
@@ -363,13 +378,13 @@ class GameEngine:
             for pid in dead_ids:
                 p = self.players[pid]
                 game_logger.log(f"玩家 {pid} 发表遗言...", "yellow")
-                statement = p.speak(f"你已死亡（首夜）。请发表遗言。", self.public_facts)
+                statement = await p.speak(f"你已死亡（首夜）。请发表遗言。", self.public_facts)
                 self.broadcast(f"玩家 {pid} (遗言): {statement}")
         else:
             if dead_ids:
                 game_logger.log(f"非首夜死亡，无遗言。", "dim")
 
-        # Discussion
+        # Discussion (Sequential preserved for logic)
         game_logger.log("\n开始自由讨论...", "cyan")
         alive = self.get_alive_players()
         # Simple round robin discussion
@@ -379,7 +394,7 @@ class GameEngine:
             # Check if endgame (<= 4 players) to trigger decisive mode
             is_endgame = len(alive) <= 4
             
-            statement = p.speak(
+            statement = await p.speak(
                 f"当前存活: {alive}。之前的发言: {discussion_log}", 
                 self.public_facts,
                 is_endgame=is_endgame
@@ -389,19 +404,30 @@ class GameEngine:
             self.broadcast(log_msg)
             discussion_log.append(log_msg)
             
-        # Voting
+        # Voting (Parallelized)
         game_logger.log("\n开始投票...", "cyan")
         votes = {}
-        for pid in alive:
+        
+        async def get_vote(pid):
             p = self.players[pid]
             try:
                 # Pass public facts to act
-                resp = p.act("投票", [id for id in alive if id != pid], self.public_facts) 
+                resp = await p.act("投票", [id for id in alive if id != pid], self.public_facts) 
                 vote_target = int(resp)
                 if vote_target in alive:
-                    votes[pid] = vote_target
-                    game_logger.log(f"玩家 {pid} 投给了 {vote_target}")
+                    return pid, vote_target
             except:
+                pass
+            return pid, None # Abstain
+
+        tasks = [get_vote(pid) for pid in alive]
+        results = await asyncio.gather(*tasks)
+        
+        for pid, vote_target in results:
+            if vote_target is not None:
+                votes[pid] = vote_target
+                game_logger.log(f"玩家 {pid} 投给了 {vote_target}")
+            else:
                 game_logger.log(f"玩家 {pid} 弃票")
         
         # Tally
@@ -438,39 +464,46 @@ class GameEngine:
             
             # Last words
             p = self.players[out_id]
-            statement = p.speak("你被投票处决。请发表遗言。", self.public_facts)
+            statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
             self.broadcast(f"玩家 {out_id} (遗言): {statement}")
             
         else:
             game_logger.log(f"平票 {candidates}，进入PK发言环节...", "bold yellow")
             self.log_event("vote_result_tie", {"votes": votes, "candidates": candidates})
             
-            # PK Round
+            # PK Round (Sequential)
             pk_log = []
             for cid in candidates:
                 p = self.players[cid]
                 game_logger.log(f"玩家 {cid} PK发言...", "yellow")
-                statement = p.speak(f"你和其他玩家平票。请进行PK发言，争取大家的支持。", self.public_facts)
+                statement = await p.speak(f"你和其他玩家平票。请进行PK发言，争取大家的支持。", self.public_facts)
                 log_msg = f"玩家 {cid} (PK): {statement}"
                 self.broadcast(log_msg)
                 pk_log.append(log_msg)
                 
             game_logger.log("\nPK投票...", "cyan")
             pk_votes = {}
-            # Only players NOT in candidates vote? Usually all vote or non-candidates.
-            # Standard rules: All alive players vote again (sometimes excluding PK players).
-            # Let's keep it simple: All alive players vote.
-            for pid in alive:
+            
+            async def get_pk_vote(pid):
                 p = self.players[pid]
                 try:
-                    # Candidates restricted to the tie group? Usually yes.
-                    resp = p.act(f"PK投票（只能投 {candidates} 或 -1）", candidates, self.public_facts)
+                    resp = await p.act(f"PK投票（只能投 {candidates} 或 -1）", candidates, self.public_facts)
                     vote_target = int(resp)
                     if vote_target in candidates:
-                        pk_votes[pid] = vote_target
-                        game_logger.log(f"玩家 {pid} PK投给了 {vote_target}")
+                        return pid, vote_target
                 except:
-                     game_logger.log(f"玩家 {pid} 弃票")
+                    pass
+                return pid, None
+
+            tasks = [get_pk_vote(pid) for pid in alive]
+            results = await asyncio.gather(*tasks)
+            
+            for pid, vote_target in results:
+                if vote_target is not None:
+                    pk_votes[pid] = vote_target
+                    game_logger.log(f"玩家 {pid} PK投给了 {vote_target}")
+                else:
+                    game_logger.log(f"玩家 {pid} 弃票")
                      
             # Tally PK
             if not pk_votes:
@@ -502,13 +535,8 @@ class GameEngine:
                 
                 # Last words
                 p = self.players[out_id]
-                statement = p.speak("你被投票处决。请发表遗言。", self.public_facts)
+                statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
                 self.broadcast(f"玩家 {out_id} (遗言): {statement}")
             else:
                 game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")
                 self.log_event("vote_result_pk_tie", {"votes": pk_votes, "out": None})
-
-    def broadcast(self, message: str):
-        for p in self.players.values():
-            if p.is_alive:
-                p.receive_message(message)

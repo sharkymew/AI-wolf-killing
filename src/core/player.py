@@ -32,12 +32,46 @@ class Player:
         prefix = "[系统通知] " if not is_private else "[私密信息] "
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
-    def _generate_with_stream(self, prompt: str, prefix_log: str = "") -> str:
+    def _manage_memory(self, retention_turns: int = 10):
+        """Manage memory usage by keeping system prompt and recent history."""
+        # System prompt is always at index 0
+        if len(self.memory) <= 1:
+            return
+            
+        system_msg = self.memory[0]
+        # Keep recent history
+        # Assuming average 2-4 messages per turn per player interaction (user prompt, thinking, response)
+        # We want to keep last N turns. Let's approximate messages.
+        # A safer approach is just sliding window of messages.
+        # Say 20 messages (~5-6 turns).
+        # User config is `retention_turns`. Let's estimate 1 turn = 4 messages (generous).
+        keep_count = retention_turns * 4
+        
+        if len(self.memory) > keep_count + 1:
+            # Keep system + last keep_count
+            recent_memory = self.memory[-keep_count:]
+            self.memory = [system_msg] + recent_memory
+
+    async def _generate_with_stream(self, prompt: str, prefix_log: str = "") -> str:
         """Helper to generate response with streaming output to console."""
+        # Prune memory before adding new user prompt
+        # We hardcode retention for now or pass from config.
+        # Since Player doesn't hold Config directly (only LLMClient does), we can access via llm_client.config if needed
+        # Or just default. Let's use a safe default 15 turns ~ 60 messages.
+        self._manage_memory(retention_turns=15)
+        
         self.memory.append({"role": "user", "content": prompt})
         
         text = Text(prefix_log)
         full_response = ""
+        
+        # rich.Live is synchronous context manager.
+        # We cannot await inside __enter__ or __exit__.
+        # But we can await inside the body.
+        # However, stream callback is called by async generate_response.
+        # We need to update the Live display.
+        # Live display runs in a thread or loop.
+        # Simple approach: Start Live, then await generate.
         
         with Live(text, refresh_per_second=10, console=game_logger.console):
             def callback(chunk):
@@ -45,12 +79,12 @@ class Player:
                 full_response += chunk
                 text.append(chunk)
                 
-            response = self.llm_client.generate_response(self.memory, stream_callback=callback)
+            response = await self.llm_client.generate_response(self.memory, stream_callback=callback)
             
         self.memory.append({"role": "assistant", "content": response})
         return response
 
-    def _generate_with_reasoning(self, prompt: str) -> str:
+    async def _generate_with_reasoning(self, prompt: str) -> str:
         """
         For reasoning models:
         1. Ask for a thought process (hidden from public but streamed for user visibility).
@@ -60,23 +94,13 @@ class Player:
         reasoning_prompt = f"{prompt}\n请先进行一步步的逻辑推理和分析，输出你的思考过程（不需要输出最终决策结果）："
         
         game_logger.log(f"玩家 {self.player_id} ({self.role.name}) 正在思考...", "dim")
-        reasoning = self._generate_with_stream(reasoning_prompt, f"[dim]玩家 {self.player_id} 思考过程: [/dim]")
+        reasoning = await self._generate_with_stream(reasoning_prompt, f"[dim]玩家 {self.player_id} 思考过程: [/dim]")
         
         # Step 2: Final Action
         final_prompt = "基于以上的思考，请给出你最终的简短决策或发言（不要包含思考过程）："
         self.memory.append({"role": "user", "content": final_prompt})
         
         # Stream the final response too
-        # game_logger.log(f"玩家 {self.player_id} 正在发言...", "green")
-        response = self.llm_client.generate_response(self.memory) # Speak usually handled by caller for logging? 
-        # Actually caller logs "Player X: ...", so we should just return string?
-        # But user wants to see output AS IT COMES.
-        # So we should stream the final response here too.
-        
-        # Remove the previous user prompt from memory to avoid double append in _generate_with_stream?
-        # Actually _generate_with_stream appends.
-        # Let's manually handle the second step stream.
-        
         text = Text(f"玩家 {self.player_id}: ")
         full_response = ""
         with Live(text, refresh_per_second=10, console=game_logger.console):
@@ -85,12 +109,12 @@ class Player:
                 full_response += chunk
                 text.append(chunk)
             
-            response = self.llm_client.generate_response(self.memory, stream_callback=callback)
+            response = await self.llm_client.generate_response(self.memory, stream_callback=callback)
             
         self.memory.append({"role": "assistant", "content": response})
         return response
 
-    def speak(self, context: str, public_facts: List[str] = [], is_endgame: bool = False) -> str:
+    async def speak(self, context: str, public_facts: List[str] = [], is_endgame: bool = False) -> str:
         """Generate a public statement."""
         
         # Construct facts section
@@ -109,12 +133,12 @@ class Player:
         prompt = f"{facts_str}现在是白天讨论阶段。\n上下文：{context}{advice}\n请发表你的观点（100字以内）："
         
         if getattr(self.llm_client.config, "is_reasoning", False):
-            return self._generate_with_reasoning(prompt)
+            return await self._generate_with_reasoning(prompt)
         
         # Normal stream
-        return self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
+        return await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
 
-    def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
+    async def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
         """Generate a game action (vote, kill, verify, etc.)."""
         # Add abstain option explicitly
         options_with_abstain = options + [-1]
@@ -150,17 +174,9 @@ class Player:
         
         response = ""
         if getattr(self.llm_client.config, "is_reasoning", False):
-            # For actions, we might not want to stream the thought process publicly if it reveals too much?
-            # But user said "I want to see output every time".
-            # Let's stream the reasoning (dimmed) and then the result.
-            response = self._generate_with_reasoning(prompt).strip()
+            response = (await self._generate_with_reasoning(prompt)).strip()
         else:
-            # For simple actions, maybe just stream the result?
-            # Or just return. Usually actions are hidden (night).
-            # But if user wants to see...
-            # Let's stream it but maybe with a "Secret" prefix if it's night?
-            # The prompt says "output your choice".
-            response = self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ").strip()
+            response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
             
         # Robust parsing: Use Judge Model if available
         if self.judge_client:
@@ -176,7 +192,8 @@ class Player:
             )
             try:
                 # Judge output should be very short
-                judge_resp = self.judge_client.generate_response([{"role": "user", "content": judge_prompt}])
+                # Judge client is also Async!
+                judge_resp = await self.judge_client.generate_response([{"role": "user", "content": judge_prompt}])
                 judge_val = judge_resp.strip()
                 # Basic validation
                 match = re.search(r"(-?\d+)", judge_val)
