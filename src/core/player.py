@@ -6,6 +6,8 @@ from rich.live import Live
 from rich.text import Text
 from src.utils.logger import game_logger
 import re
+import tiktoken
+import json
 
 class Player:
     def __init__(self, player_id: int, role: Role, llm_client: Any, model_name: str, judge_client: Any = None):
@@ -33,32 +35,48 @@ class Player:
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
     def _manage_memory(self, retention_turns: int = 10):
-        """Manage memory usage by keeping system prompt and recent history."""
-        # System prompt is always at index 0
+        """Manage memory usage by keeping system prompt and recent history using token limit."""
         if len(self.memory) <= 1:
             return
             
         system_msg = self.memory[0]
-        # Keep recent history
-        # Assuming average 2-4 messages per turn per player interaction (user prompt, thinking, response)
-        # We want to keep last N turns. Let's approximate messages.
-        # A safer approach is just sliding window of messages.
-        # Say 20 messages (~5-6 turns).
-        # User config is `retention_turns`. Let's estimate 1 turn = 4 messages (generous).
-        keep_count = retention_turns * 4
+        recent_memory = self.memory[1:]
         
-        if len(self.memory) > keep_count + 1:
-            # Keep system + last keep_count
-            recent_memory = self.memory[-keep_count:]
-            self.memory = [system_msg] + recent_memory
+        # Get limits from config (safe fallback if config access is tricky, but client has config)
+        max_tokens = getattr(self.llm_client.config, "max_memory_tokens", 2000)
+        
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+        except:
+            encoding = tiktoken.get_encoding("gpt2") # Fallback
+            
+        def count_tokens(msgs):
+            text = "".join([str(m.get("content", "")) for m in msgs])
+            return len(encoding.encode(text))
+            
+        # Always keep system prompt
+        current_tokens = count_tokens([system_msg])
+        
+        # Add recent messages until limit
+        kept_msgs = []
+        for msg in reversed(recent_memory):
+            msg_tokens = count_tokens([msg])
+            if current_tokens + msg_tokens > max_tokens:
+                break
+            kept_msgs.insert(0, msg)
+            current_tokens += msg_tokens
+            
+        if len(kept_msgs) < len(recent_memory):
+            # Log pruning only if significant
+            # game_logger.log(f"玩家 {self.player_id} 记忆修剪: {len(recent_memory)} -> {len(kept_msgs)} (Tokens: {current_tokens})", "dim")
+            pass
+            
+        self.memory = [system_msg] + kept_msgs
 
     async def _generate_with_stream(self, prompt: str, prefix_log: str = "") -> str:
         """Helper to generate response with streaming output to console."""
-        # Prune memory before adding new user prompt
-        # We hardcode retention for now or pass from config.
-        # Since Player doesn't hold Config directly (only LLMClient does), we can access via llm_client.config if needed
-        # Or just default. Let's use a safe default 15 turns ~ 60 messages.
-        self._manage_memory(retention_turns=15)
+        # Prune memory
+        self._manage_memory()
         
         self.memory.append({"role": "user", "content": prompt})
         
@@ -149,31 +167,64 @@ class Player:
         if facts_str:
             facts_str = f"【已证实事实（必须遵守）】\n{facts_str}\n"
             
-        prompt = (
-            f"{facts_str}"
-            f"现在是{action_type}阶段。\n"
-            f"可选目标ID：{options_str}\n"
-            f"如果不确定或想弃票/不使用技能，请回复 -1。\n"
-        )
+        # Check if JSON mode is enabled for this model
+        use_json = getattr(self.llm_client.config, "json_mode", False)
         
-        # Add voting reasoning requirement
-        if "投票" in action_type:
+        prompt = f"{facts_str}现在是{action_type}阶段。\n可选目标ID：{options_str}\n如果不确定或想弃票/不使用技能，请回复 -1。\n"
+
+        if use_json:
             prompt += (
-                f"【重要】请先简短陈述投票理由（一句话），然后换行输出数字。\n"
-                f"示例：\n"
-                f"1号发言太划水，不像好人。\n"
-                f"1\n"
+                "【重要】请务必输出严格的 JSON 格式，不要包含Markdown代码块（```json ... ```）。\n"
+                "格式如下：\n"
+                "{\"thought\": \"你的简短思考过程（100字以内）\", \"action\": 目标ID数字}\n"
+                "示例：\n"
+                "{\"thought\": \"1号发言划水，且攻击了预言家，非常可疑。\", \"action\": 1}\n"
             )
         else:
-             prompt += (
-                f"【重要】请仅输出一个数字（目标玩家ID或-1），不要包含任何其他文字、标点或解释！\n"
-                f"示例输出：\n"
-                f"1\n"
-                f"-1"
-            )
+            # Add voting reasoning requirement (Text Mode)
+            if "投票" in action_type:
+                prompt += (
+                    f"【重要】请先简短陈述投票理由（一句话），然后换行输出数字。\n"
+                    f"示例：\n"
+                    f"1号发言太划水，不像好人。\n"
+                    f"1\n"
+                )
+            else:
+                 prompt += (
+                    f"【重要】请仅输出一个数字（目标玩家ID或-1），不要包含任何其他文字、标点或解释！\n"
+                    f"示例输出：\n"
+                    f"1\n"
+                    f"-1"
+                )
         
         response = ""
-        if getattr(self.llm_client.config, "is_reasoning", False):
+        # If JSON mode, we don't use 'reasoning' model feature usually, or we use it but still expect JSON.
+        # But if use_json is True, we probably want to skip the "thinking" step of _generate_with_reasoning 
+        # because the thought is inside the JSON.
+        
+        if use_json:
+            # Direct generation with JSON enforcement
+            # We assume JSON mode handles "thought" inside JSON
+            response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
+            
+            # Parse JSON
+            try:
+                # Cleanup potential markdown
+                cleaned = response.replace("```json", "").replace("```", "").strip()
+                data = json.loads(cleaned)
+                
+                thought = data.get("thought", "")
+                action = data.get("action", -1)
+                
+                if thought:
+                    game_logger.log(f"[dim]玩家 {self.player_id} 思考: {thought}[/dim]")
+                    
+                return str(action)
+            except json.JSONDecodeError:
+                game_logger.log(f"JSON解析失败，尝试回退到Regex: {response}", "yellow")
+                # Fallthrough to regex/judge
+        
+        elif getattr(self.llm_client.config, "is_reasoning", False):
             response = (await self._generate_with_reasoning(prompt)).strip()
         else:
             response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()

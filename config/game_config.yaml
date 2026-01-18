@@ -17,30 +17,35 @@ models:
     base_url: "https://api.deepseek.com"
     model: "deepseek-chat"
     is_reasoning: true
+    json_mode: true
   - name: "DeepSeek2"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
     model: "deepseek-chat"
     is_reasoning: true
+    json_mode: true
   - name: "DeepSeek3"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
     model: "deepseek-chat"
     is_reasoning: true
+    json_mode: true
   - name: "DeepSeek4"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
     model: "deepseek-chat"
     is_reasoning: true
+    json_mode: true
   - name: "DeepSeek5"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
     model: "deepseek-chat"
     is_reasoning: true
+    json_mode: true
 
 judge_model:
   name: "Judge"
@@ -51,6 +56,8 @@ judge_model:
   temperature: 0.1
 
 game:
+  max_turns: 50
+  max_memory_tokens: 8000
   roles:
     werewolf: 2
     witch: 1

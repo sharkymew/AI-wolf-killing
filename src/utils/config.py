@@ -21,7 +21,8 @@ class RoleConfig(BaseModel):
 class GameConfig(BaseModel):
     roles: RoleConfig = RoleConfig()
     max_turns: int = 50
-    memory_retention_turns: int = 10 # Keep last N turns of memory
+    memory_retention_turns: int = 10 # Deprecated: Keep last N turns of memory
+    max_memory_tokens: int = 2000 # Max tokens for memory retention (using tiktoken)
 
 class AppConfig(BaseModel):
     models: List[ModelConfig]
