@@ -5,12 +5,22 @@ models:
     base_url: "https://api.siliconflow.cn/v1"
     model: "Pro/zai-org/GLM-4.7"
     is_reasoning: true
+    disabled: false
   - name: "Qwen"
     provider: "siliconflow"
     api_key: "env:SILICONFLOW_API_KEY"
     base_url: "https://api.siliconflow.cn/v1"
     model: "Qwen/Qwen3-VL-32B-Instruct"
     is_reasoning: true
+    disabled: false
+  - name: "DeepSeek1"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
   - name: "DeepSeek2"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
@@ -18,13 +28,7 @@ models:
     model: "deepseek-chat"
     is_reasoning: true
     json_mode: true
-  - name: "DeepSeek2"
-    provider: "deepseek"
-    api_key: "env:DEEPSEEK_API_KEY"
-    base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
-    is_reasoning: true
-    json_mode: true
+    disabled: false
   - name: "DeepSeek3"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
@@ -32,6 +36,7 @@ models:
     model: "deepseek-chat"
     is_reasoning: true
     json_mode: true
+    disabled: false
   - name: "DeepSeek4"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
@@ -39,6 +44,7 @@ models:
     model: "deepseek-chat"
     is_reasoning: true
     json_mode: true
+    disabled: false
   - name: "DeepSeek5"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
@@ -46,6 +52,31 @@ models:
     model: "deepseek-chat"
     is_reasoning: true
     json_mode: true
+    disabled: false
+  - name: "DeepSeek6"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek7"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek8"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
 
 judge_model:
   name: "Judge"
@@ -56,10 +87,17 @@ judge_model:
   temperature: 0.1
 
 game:
-  max_turns: 50
+  max_turns: 100
   max_memory_tokens: 8000
   roles:
+    # 推荐板子配置：
+    # 6人局: 2狼 1女 1预 2民 (默认)
+    # 7人局: 2狼 1女 1预 1猎 2民
+    # 9人局: 3狼 1女 1预 1猎 3民
+    # 10人局: 3狼 1女 1预 1猎 4民
+    # 注意：请确保下方 models 列表中的模型数量 >= 角色总数
     werewolf: 2
     witch: 1
     seer: 1
+    hunter: 1
     villager: 2

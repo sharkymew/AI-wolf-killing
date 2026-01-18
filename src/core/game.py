@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple, cast
 from src.utils.config import AppConfig
 from src.core.player import Player
-from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Villager
+from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Hunter, Villager
 from src.llm.client import LLMClient
 from src.llm.mock_client import MockLLMClient
 from src.utils.logger import game_logger
@@ -60,6 +60,7 @@ class GameEngine:
         for _ in range(r_config.werewolf): roles.append(Werewolf())
         for _ in range(r_config.witch): roles.append(Witch())
         for _ in range(r_config.seer): roles.append(Seer())
+        for _ in range(r_config.hunter): roles.append(Hunter())
         for _ in range(r_config.villager): roles.append(Villager())
         
         random.shuffle(roles)
@@ -164,15 +165,51 @@ class GameEngine:
         # 3. Seer Action
         await self._seer_action()
         
-        # Calculate deaths
-        dead = []
+        # Calculate deaths with reasons
+        deaths = {} # pid -> reason (wolf/poison)
+        
         if target_id and target_id != save_id:
-            dead.append(target_id)
-        if poison_id:
-            dead.append(poison_id)
+            deaths[target_id] = "wolf"
             
+        if poison_id:
+            deaths[poison_id] = "poison"
+            
+        # Process Hunter (if dead)
+        final_dead = []
+        for pid, reason in deaths.items():
+            final_dead.append(pid)
+            
+            # Check Hunter trigger
+            p = self.players[pid]
+            if p.role.type == RoleType.HUNTER:
+                if reason == "poison":
+                    game_logger.log(f"玩家 {pid} (猎人) 被毒死，无法开枪。", "dim")
+                else:
+                    game_logger.log(f"玩家 {pid} (猎人) 死亡，触发技能！", "bold red")
+                    shot_id = await self._hunter_action(pid)
+                    if shot_id:
+                        game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                        final_dead.append(shot_id)
+                        self.log_event("hunter_shoot", {"hunter": pid, "target": shot_id})
+
         # Remove duplicates
-        return list(set(dead))
+        return list(set(final_dead))
+
+    async def _hunter_action(self, hunter_id: int) -> Optional[int]:
+        hunter = self.players[hunter_id]
+        alive = self.get_alive_players()
+        alive = [p for p in alive if p != hunter_id] # Exclude self
+        
+        if not alive: return None
+        
+        try:
+            resp = await hunter.act("猎人开枪", alive, self.public_facts)
+            target = int(resp)
+            if target in alive:
+                return target
+        except:
+            pass
+        return None
 
     async def _werewolf_action(self) -> Optional[int]:
         wolves = [p for p in self.players.values() if p.is_alive and p.role.type == RoleType.WEREWOLF]
@@ -460,6 +497,22 @@ class GameEngine:
             
             self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
             
+            # Hunter check
+            if self.players[out_id].role.type == RoleType.HUNTER:
+                 game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
+                 shot_id = await self._hunter_action(out_id)
+                 if shot_id:
+                     game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                     self.players[shot_id].update_status(False)
+                     
+                     shot_role = self.players[shot_id].role.name
+                     game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
+                     
+                     fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
+                     self.public_facts.append(fact)
+                     self.broadcast(fact)
+                     self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
+
             if self.check_win_condition(): return
             
             # Last words
@@ -531,12 +584,28 @@ class GameEngine:
                 
                 self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name})
                 
-                if self.check_win_condition(): return
-                
                 # Last words
                 p = self.players[out_id]
                 statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
                 self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+
+                # Hunter check PK
+                if self.players[out_id].role.type == RoleType.HUNTER:
+                     game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
+                     shot_id = await self._hunter_action(out_id)
+                     if shot_id:
+                         game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                         self.players[shot_id].update_status(False)
+                         
+                         shot_role = self.players[shot_id].role.name
+                         game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
+                         
+                         fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
+                         self.public_facts.append(fact)
+                         self.broadcast(fact)
+                         self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
+
+                if self.check_win_condition(): return
             else:
                 game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")
                 self.log_event("vote_result_pk_tie", {"votes": pk_votes, "out": None})

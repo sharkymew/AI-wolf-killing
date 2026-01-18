@@ -5,6 +5,7 @@ class RoleType(str, Enum):
     WEREWOLF = "werewolf"
     WITCH = "witch"
     SEER = "seer"
+    HUNTER = "hunter"
     VILLAGER = "villager"
 
 class Faction(str, Enum):
@@ -32,6 +33,12 @@ class Seer(Role):
     name: str = "预言家"
     type: RoleType = RoleType.SEER
     faction: Faction = Faction.GOOD
+
+class Hunter(Role):
+    name: str = "猎人"
+    type: RoleType = RoleType.HUNTER
+    faction: Faction = Faction.GOOD
+    can_shoot: bool = True
 
 class Villager(Role):
     name: str = "平民"

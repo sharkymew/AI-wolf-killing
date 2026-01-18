@@ -11,11 +11,15 @@ class ModelConfig(BaseModel):
     model: str
     temperature: float = 0.7
     is_reasoning: bool = False  # 是否为推理模型（支持 CoT）
+    json_mode: bool = False # 是否强制使用 JSON 模式
+    max_retries: int = 3 # API 请求重试次数
+    disabled: bool = False # 是否禁用此模型
 
 class RoleConfig(BaseModel):
     werewolf: int = 2
     witch: int = 1
     seer: int = 1
+    hunter: int = 0
     villager: int = 2
 
 class GameConfig(BaseModel):
@@ -49,4 +53,30 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
             env_var = judge["api_key"].split(":", 1)[1]
             judge["api_key"] = os.getenv(env_var)
 
-    return AppConfig(**data)
+    config = AppConfig(**data)
+    
+    # Validation logic
+    active_models = [m for m in config.models if not m.disabled]
+    
+    roles = config.game.roles
+    total_players = roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
+    
+    if len(active_models) < total_players:
+        raise ValueError(
+            f"Configuration Error: Not enough enabled models for {total_players} players. "
+            f"Active models: {len(active_models)}, Required: {total_players}."
+        )
+        
+    # Auto-disable extra models if needed
+    if len(active_models) > total_players:
+        extra_count = len(active_models) - total_players
+        # Disable the last N enabled models
+        disabled_count = 0
+        for i in range(len(config.models) - 1, -1, -1):
+            if not config.models[i].disabled:
+                config.models[i].disabled = True
+                disabled_count += 1
+                if disabled_count >= extra_count:
+                    break
+                    
+    return config
