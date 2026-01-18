@@ -1,0 +1,29 @@
+models:
+  - name: "MockA_Reasoning"
+    provider: "mock"
+    model: "mock-model"
+    is_reasoning: true
+  - name: "MockB"
+    provider: "mock"
+    model: "mock-model"
+    is_reasoning: false
+  - name: "MockC"
+    provider: "mock"
+    model: "mock-model"
+  - name: "MockD"
+    provider: "mock"
+    model: "mock-model"
+  - name: "MockE"
+    provider: "mock"
+    model: "mock-model"
+  - name: "MockF"
+    provider: "mock"
+    model: "mock-model"
+
+game:
+  roles:
+    werewolf: 2
+    witch: 1
+    seer: 1
+    villager: 2
+  max_turns: 10

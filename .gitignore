@@ -1,0 +1,28 @@
+# Environments
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+
+# Tests (Excluded as requested)
+tests/
+test_*.py
+*_test.py
+
+# IDE
+.trae/
+.vscode/
+.idea/

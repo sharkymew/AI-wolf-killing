@@ -1,0 +1,58 @@
+models:
+  - name: "GLM-4.7"
+    provider: "siliconflow"
+    api_key: "env:SILICONFLOW_API_KEY"
+    base_url: "https://api.siliconflow.cn/v1"
+    model: "Pro/zai-org/GLM-4.7"
+    is_reasoning: true
+  - name: "Qwen"
+    provider: "siliconflow"
+    api_key: "env:SILICONFLOW_API_KEY"
+    base_url: "https://api.siliconflow.cn/v1"
+    model: "Qwen/Qwen3-VL-32B-Instruct"
+    is_reasoning: true
+  - name: "DeepSeek2"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+  - name: "DeepSeek2"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+  - name: "DeepSeek3"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+  - name: "DeepSeek4"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+  - name: "DeepSeek5"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    is_reasoning: true
+
+judge_model:
+  name: "Judge"
+  provider: "deepseek"
+  api_key: "env:DEEPSEEK_API_KEY"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  temperature: 0.1
+
+game:
+  roles:
+    werewolf: 2
+    witch: 1
+    seer: 1
+    villager: 2
