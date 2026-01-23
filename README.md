@@ -36,10 +36,13 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # 安装依赖
 pip install -r requirements.txt
+
+# 如果你需要使用 SOCKS 代理 (如 v2ray/clash)，请额外安装 socks 支持:
+pip install "httpx[socks]"
 ```
 *(注：如果没有 `requirements.txt`，请安装以下核心库)*
 ```bash
-pip install typer rich openai pydantic pyyaml python-dotenv
+pip install typer rich openai pydantic pyyaml python-dotenv tiktoken "httpx[socks]"
 ```
 
 ### 2. 配置模型
