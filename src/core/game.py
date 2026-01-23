@@ -53,6 +53,9 @@ class GameEngine:
     def initialize_game(self):
         """Assign roles and initialize players."""
         game_logger.log("正在初始化游戏...", "bold cyan")
+        seed = getattr(self.config.game, "random_seed", None)
+        if seed is not None:
+            random.seed(seed)
         
         # Create role list
         roles = []
@@ -66,7 +69,7 @@ class GameEngine:
         random.shuffle(roles)
         
         # Assign players to models (round robin or random)
-        models = self.config.models
+        models = [m for m in self.config.models if not m.disabled]
         judge_config = self.config.judge_model
         
         # Init Judge Client if config exists
@@ -87,7 +90,14 @@ class GameEngine:
             else:
                 client = LLMClient(model_config)
                 
-            player = Player(player_id, role, client, model_config.name, judge_client)
+            player = Player(
+                player_id,
+                role,
+                client,
+                model_config.name,
+                judge_client,
+                self.config.game.max_memory_tokens
+            )
             self.players[player_id] = player
             player_roles[player_id] = role.name
             

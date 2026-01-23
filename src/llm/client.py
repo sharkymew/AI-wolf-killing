@@ -9,7 +9,8 @@ class LLMClient:
         self.config = config
         self.client = AsyncOpenAI(
             api_key=config.api_key,
-            base_url=config.base_url
+            base_url=config.base_url,
+            timeout=config.timeout
         )
         self.logger = logging.getLogger("LLMClient")
 

@@ -17,11 +17,6 @@ logs/
 # OS
 .DS_Store
 
-# Tests (Excluded as requested)
-tests/
-test_*.py
-*_test.py
-
 # IDE
 .trae/
 .vscode/

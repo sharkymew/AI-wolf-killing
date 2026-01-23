@@ -14,6 +14,7 @@ class ModelConfig(BaseModel):
     json_mode: bool = False # 是否强制使用 JSON 模式
     max_retries: int = 3 # API 请求重试次数
     disabled: bool = False # 是否禁用此模型
+    timeout: float = 60.0
 
 class RoleConfig(BaseModel):
     werewolf: int = 2
@@ -27,6 +28,7 @@ class GameConfig(BaseModel):
     max_turns: int = 50
     memory_retention_turns: int = 10 # Deprecated: Keep last N turns of memory
     max_memory_tokens: int = 2000 # Max tokens for memory retention (using tiktoken)
+    random_seed: Optional[int] = None
 
 class AppConfig(BaseModel):
     models: List[ModelConfig]
@@ -52,6 +54,15 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
         if judge.get("api_key", "").startswith("env:"):
             env_var = judge["api_key"].split(":", 1)[1]
             judge["api_key"] = os.getenv(env_var)
+
+    for model in data.get("models", []):
+        if model.get("provider") != "mock" and not model.get("api_key"):
+            raise ValueError(f"Configuration Error: Missing api_key for model {model.get('name', '')}.")
+
+    if "judge_model" in data:
+        judge = data["judge_model"]
+        if judge.get("provider") != "mock" and not judge.get("api_key"):
+            raise ValueError("Configuration Error: Missing api_key for judge_model.")
 
     config = AppConfig(**data)
     

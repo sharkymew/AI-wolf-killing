@@ -10,7 +10,15 @@ import tiktoken
 import json
 
 class Player:
-    def __init__(self, player_id: int, role: Role, llm_client: Any, model_name: str, judge_client: Any = None):
+    def __init__(
+        self,
+        player_id: int,
+        role: Role,
+        llm_client: Any,
+        model_name: str,
+        judge_client: Any = None,
+        max_memory_tokens: Optional[int] = None
+    ):
         self.player_id = player_id
         self.role = role
         self.llm_client = llm_client
@@ -18,6 +26,7 @@ class Player:
         self.judge_client = judge_client
         self.is_alive = True
         self.memory: List[Dict[str, str]] = []
+        self.max_memory_tokens = max_memory_tokens
         
         # Initialize system prompt
         self._init_memory()
@@ -43,7 +52,7 @@ class Player:
         recent_memory = self.memory[1:]
         
         # Get limits from config (safe fallback if config access is tricky, but client has config)
-        max_tokens = getattr(self.llm_client.config, "max_memory_tokens", 2000)
+        max_tokens = self.max_memory_tokens if self.max_memory_tokens is not None else getattr(self.llm_client.config, "max_memory_tokens", 2000)
         
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
