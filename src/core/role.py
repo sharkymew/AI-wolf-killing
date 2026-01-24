@@ -28,6 +28,7 @@ class Witch(Role):
     faction: Faction = Faction.GOOD
     has_antidote: bool = True
     has_poison: bool = True
+    poison_used: bool = False
 
 class Seer(Role):
     name: str = "预言家"
