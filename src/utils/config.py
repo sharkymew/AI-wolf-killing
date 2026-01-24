@@ -1,5 +1,6 @@
 import os
 import yaml
+import warnings
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -61,14 +62,28 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
             env_var = judge["api_key"].split(":", 1)[1]
             judge["api_key"] = os.getenv(env_var)
 
+    missing_model_keys = []
     for model in data.get("models", []):
         if model.get("provider") != "mock" and not model.get("api_key"):
-            raise ValueError(f"Configuration Error: Missing api_key for model {model.get('name', '')}.")
+            model["disabled"] = True
+            missing_model_keys.append(model.get("name", ""))
+
+    if missing_model_keys:
+        warnings.warn(
+            "Configuration Warning: Missing api_key for models: "
+            + ", ".join(filter(None, missing_model_keys))
+            + ". These models have been disabled.",
+            stacklevel=2,
+        )
 
     if "judge_model" in data:
         judge = data["judge_model"]
         if judge.get("provider") != "mock" and not judge.get("api_key"):
-            raise ValueError("Configuration Error: Missing api_key for judge_model.")
+            warnings.warn(
+                "Configuration Warning: Missing api_key for judge_model. Judge model disabled.",
+                stacklevel=2,
+            )
+            data.pop("judge_model", None)
 
     config = AppConfig(**data)
     
