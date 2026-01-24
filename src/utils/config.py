@@ -35,6 +35,12 @@ class AppConfig(BaseModel):
     judge_model: Optional[ModelConfig] = None # New Judge Model
     game: GameConfig = GameConfig()
 
+def get_active_models(models: List[ModelConfig]) -> List[ModelConfig]:
+    return [m for m in models if not m.disabled]
+
+def count_players(roles: RoleConfig) -> int:
+    return roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
+
 def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -67,10 +73,8 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     config = AppConfig(**data)
     
     # Validation logic
-    active_models = [m for m in config.models if not m.disabled]
-    
-    roles = config.game.roles
-    total_players = roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
+    active_models = get_active_models(config.models)
+    total_players = count_players(config.game.roles)
     
     if len(active_models) < total_players:
         raise ValueError(
