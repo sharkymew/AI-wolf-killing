@@ -4,7 +4,7 @@ import json
 import random
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, cast
-from src.utils.config import AppConfig
+from src.utils.config import AppConfig, get_active_models
 from src.core.player import Player
 from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Hunter, Villager
 from src.llm.client import LLMClient
@@ -69,7 +69,7 @@ class GameEngine:
         random.shuffle(roles)
         
         # Assign players to models (round robin or random)
-        models = [m for m in self.config.models if not m.disabled]
+        models = get_active_models(self.config.models)
         judge_config = self.config.judge_model
         
         # Init Judge Client if config exists
@@ -205,22 +205,6 @@ class GameEngine:
         # Remove duplicates
         return list(set(final_dead))
 
-    async def _hunter_action(self, hunter_id: int) -> Optional[int]:
-        hunter = self.players[hunter_id]
-        alive = self.get_alive_players()
-        alive = [p for p in alive if p != hunter_id] # Exclude self
-        
-        if not alive: return None
-        
-        try:
-            resp = await hunter.act("猎人开枪", alive, self.public_facts)
-            target = int(resp)
-            if target in alive:
-                return target
-        except:
-            pass
-        return None
-
     async def _werewolf_action(self) -> Optional[int]:
         wolves = [p for p in self.players.values() if p.is_alive and p.role.type == RoleType.WEREWOLF]
         if not wolves:
@@ -245,7 +229,7 @@ class GameEngine:
         # Initial blind vote - Parallelize this?
         # Blind vote is independent, so yes.
         # But we need to map responses back to wolves.
-        
+
         async def ask_wolf(wolf, prompt):
             try:
                 resp = await wolf.act(prompt, valid_targets)
@@ -345,47 +329,40 @@ class GameEngine:
         game_logger.log(f"狼人协商超时，强制锁定多数票目标 {target}。", "red")
         return target
 
-    async def _witch_action(self, night_death_id: Optional[int]) -> Tuple[Optional[int], Optional[int]]:
+    async def _witch_action(self, target_id: Optional[int]) -> Tuple[Optional[int], Optional[int]]:
         witch = next((p for p in self.players.values() if p.role.type == RoleType.WITCH), None)
         if not witch or not witch.is_alive:
             return None, None
             
         game_logger.log("女巫正在行动...", "dim")
-        witch_role = cast(Witch, witch.role)
+        save_id = None
+        poison_id = None
         
-        save_target = None
-        poison_target = None
-        
-        # Save?
-        if night_death_id and witch_role.has_antidote:
+        # Witch can save only if someone is killed
+        if target_id:
             try:
-                # Tell witch who died
-                witch.receive_message(f"今晚死的是 {night_death_id} 号玩家。是否使用解药？(回答 'yes' 或 'no')")
-                
-                # We'll ask to save:
-                msg = f"今晚 {night_death_id} 号玩家被杀了。你有一瓶解药。输入 {night_death_id} 使用解药，输入 -1 不使用。"
-                resp = await witch.act("女巫解药", [night_death_id, -1])
-                if int(resp) == night_death_id:
-                    save_target = night_death_id
-                    witch_role.has_antidote = False
-                    return save_target, None # Cannot use both
+                resp = await witch.act("女巫救人", [target_id])
+                if int(resp) == target_id:
+                    save_id = target_id
             except:
                 pass
         
-        # Poison?
-        if not save_target and witch_role.has_poison:
-            alive_ids = self.get_alive_players()
-            alive_ids.remove(witch.player_id) # Don't poison self usually
+        # Witch can poison someone (only once)
+        alive_ids = self.get_alive_players()
+        if witch.role.poison_used:
+            poison_id = None
+        else:
             try:
-                resp = await witch.act("女巫毒药", alive_ids + [-1])
-                target = int(resp)
-                if target in alive_ids:
-                    poison_target = target
-                    witch_role.has_poison = False
+                resp = await witch.act("女巫毒人", alive_ids)
+                poison_id = int(resp)
+                if poison_id not in alive_ids:
+                    poison_id = None
+                else:
+                    witch.role.poison_used = True
             except:
-                pass
+                poison_id = None
                 
-        return save_target, poison_target
+        return save_id, poison_id
 
     async def _seer_action(self):
         seer = next((p for p in self.players.values() if p.role.type == RoleType.SEER), None)
@@ -406,216 +383,232 @@ class GameEngine:
         except:
             pass
 
-    async def run_day_phase(self, dead_ids: List[int]):
-        game_logger.log("\n天亮了。", "blue")
-        
-        # Announcement
-        if dead_ids:
-            game_logger.log(f"昨晚死亡的玩家是: {dead_ids}", "red")
-            for pid in dead_ids:
-                self.players[pid].update_status(False)
-                self.log_event("player_death", {"player_id": pid, "turn": self.turn})
-        else:
-            game_logger.log("昨晚是平安夜。", "green")
-            
-        if self.check_win_condition(): return
-        
-        # Last words for night deaths (Only Night 1 usually has last words)
-        if self.turn == 1:
-            for pid in dead_ids:
-                p = self.players[pid]
-                game_logger.log(f"玩家 {pid} 发表遗言...", "yellow")
-                statement = await p.speak(f"你已死亡（首夜）。请发表遗言。", self.public_facts)
-                self.broadcast(f"玩家 {pid} (遗言): {statement}")
-        else:
-            if dead_ids:
-                game_logger.log(f"非首夜死亡，无遗言。", "dim")
+    def _count_votes(self, votes: Dict[int, int]) -> Dict[int, int]:
+        counts = {}
+        for target in votes.values():
+            counts[target] = counts.get(target, 0) + 1
+        return counts
 
-        # Discussion (Sequential preserved for logic)
+    async def run_day_phase(self, dead_at_night: List[int]):
+        if dead_at_night:
+            game_logger.log("\n天亮了。昨晚死亡玩家: " + ", ".join(map(str, dead_at_night)), "red")
+            for pid in dead_at_night:
+                self.players[pid].update_status(False)
+                role_name = self.players[pid].role.name
+                game_logger.log(f"玩家 {pid} 的身份是: {role_name}", "bold red")
+                fact = f"【系统公告】玩家 {pid} 死亡，身份是 {role_name}。"
+                self.public_facts.append(fact)
+            
+            # Allow last words
+            for pid in dead_at_night:
+                p = self.players[pid]
+                statement = await p.speak("你被狼人杀死。请发表遗言。", self.public_facts)
+                self.broadcast(f"玩家 {pid} (遗言): {statement}")
+            
+            # Process Hunter if any dead at night (after last words)
+            for pid in dead_at_night:
+                if self.players[pid].role.type == RoleType.HUNTER:
+                    if any(
+                        self.players[pid].role.type == RoleType.HUNTER
+                        and pid in dead_at_night
+                        for pid in dead_at_night
+                    ):
+                        if pid in dead_at_night:
+                            game_logger.log(f"玩家 {pid} (猎人) 死亡，触发技能！", "bold red")
+                            shot_id = await self._hunter_action(pid)
+                            if shot_id:
+                                game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                                self.players[shot_id].update_status(False)
+                                shot_role = self.players[shot_id].role.name
+                                game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
+                                fact = f"【系统公告】猎人 {pid} 开枪带走了玩家 {shot_id} ({shot_role})。"
+                                self.public_facts.append(fact)
+                                self.broadcast(fact)
+                                self.log_event("hunter_shoot", {"hunter": pid, "target": shot_id})
+            
+            if self.check_win_condition():
+                return
+        else:
+            game_logger.log("\n天亮了。昨晚是平安夜。", "green")
+
+        # Daytime discussion
         game_logger.log("\n开始自由讨论...", "cyan")
-        alive = self.get_alive_players()
-        # Simple round robin discussion
-        discussion_log = []
-        for pid in alive:
+        speeches = []
+        alive_ids = self.get_alive_players()
+        is_endgame = len(alive_ids) <= 4
+        
+        # Let each alive player speak
+        for pid in alive_ids:
             p = self.players[pid]
-            # Check if endgame (<= 4 players) to trigger decisive mode
-            is_endgame = len(alive) <= 4
-            
             statement = await p.speak(
-                f"当前存活: {alive}。之前的发言: {discussion_log}", 
+                f"你是玩家 {pid}。请发表你的观点。",
                 self.public_facts,
-                is_endgame=is_endgame
+                is_endgame
             )
-            log_msg = f"玩家 {pid}: {statement}"
-            game_logger.log(log_msg)
-            self.broadcast(log_msg)
-            discussion_log.append(log_msg)
+            speeches.append((pid, statement))
             
-        # Voting (Parallelized)
+        # Broadcast all speeches
+        for pid, statement in speeches:
+            self.broadcast(f"玩家 {pid}: {statement}")
+
+        if self.check_win_condition():
+            return
+        
+        # Voting phase
         game_logger.log("\n开始投票...", "cyan")
         votes = {}
+        alive_ids = self.get_alive_players()
         
-        async def get_vote(pid):
-            p = self.players[pid]
-            try:
-                # Pass public facts to act
-                resp = await p.act("投票", [id for id in alive if id != pid], self.public_facts) 
-                vote_target = int(resp)
-                if vote_target in alive:
-                    return pid, vote_target
-            except:
-                pass
-            return pid, None # Abstain
-
-        tasks = [get_vote(pid) for pid in alive]
+        tasks = [self.players[pid].act("投票", alive_ids, self.public_facts) for pid in alive_ids]
         results = await asyncio.gather(*tasks)
         
-        for pid, vote_target in results:
-            if vote_target is not None:
-                votes[pid] = vote_target
-                game_logger.log(f"玩家 {pid} 投给了 {vote_target}")
-            else:
-                game_logger.log(f"玩家 {pid} 弃票")
-        
-        # Tally
-        if not votes:
-            game_logger.log("无人投票，平安日。")
-            self.log_event("vote_result", {"votes": votes, "out": None})
-            # PK Logic: If no one votes (rare), maybe just continue.
-            return
-            
-        vote_counts = {}
-        for target in votes.values():
-            vote_counts[target] = vote_counts.get(target, 0) + 1
-            
-        max_votes = max(vote_counts.values())
-        candidates = [t for t, c in vote_counts.items() if c == max_votes]
-        
-        if len(candidates) == 1:
-            out_id = candidates[0]
-            game_logger.log(f"玩家 {out_id} 被投票处决！", "red")
-            self.players[out_id].update_status(False)
-            
-            # Reveal role
-            role_name = self.players[out_id].role.name
-            game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
-            
-            # Add to public facts
-            fact = f"【系统公告】第 {self.turn} 天白天，玩家 {out_id} 被投票处决，身份是 {role_name}。"
-            self.public_facts.append(fact)
-            self.broadcast(fact) # Broadcast to all players' memory
-            
-            self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
-            
-            # Hunter check
-            if self.players[out_id].role.type == RoleType.HUNTER:
-                 game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
-                 shot_id = await self._hunter_action(out_id)
-                 if shot_id:
-                     game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
-                     self.players[shot_id].update_status(False)
-                     
-                     shot_role = self.players[shot_id].role.name
-                     game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
-                     
-                     fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
-                     self.public_facts.append(fact)
-                     self.broadcast(fact)
-                     self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
-
-            if self.check_win_condition(): return
-            
-            # Last words
-            p = self.players[out_id]
-            statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
-            self.broadcast(f"玩家 {out_id} (遗言): {statement}")
-            
-        else:
-            game_logger.log(f"平票 {candidates}，进入PK发言环节...", "bold yellow")
-            self.log_event("vote_result_tie", {"votes": votes, "candidates": candidates})
-            
-            # PK Round (Sequential)
-            pk_log = []
-            for cid in candidates:
-                p = self.players[cid]
-                game_logger.log(f"玩家 {cid} PK发言...", "yellow")
-                statement = await p.speak(f"你和其他玩家平票。请进行PK发言，争取大家的支持。", self.public_facts)
-                log_msg = f"玩家 {cid} (PK): {statement}"
-                self.broadcast(log_msg)
-                pk_log.append(log_msg)
-                
-            game_logger.log("\nPK投票...", "cyan")
-            pk_votes = {}
-            
-            async def get_pk_vote(pid):
-                p = self.players[pid]
-                try:
-                    resp = await p.act(f"PK投票（只能投 {candidates} 或 -1）", candidates, self.public_facts)
-                    vote_target = int(resp)
-                    if vote_target in candidates:
-                        return pid, vote_target
-                except:
-                    pass
-                return pid, None
-
-            tasks = [get_pk_vote(pid) for pid in alive]
-            results = await asyncio.gather(*tasks)
-            
-            for pid, vote_target in results:
-                if vote_target is not None:
-                    pk_votes[pid] = vote_target
-                    game_logger.log(f"玩家 {pid} PK投给了 {vote_target}")
+        for pid, resp in zip(alive_ids, results):
+            try:
+                target_id = int(resp)
+                if target_id in alive_ids:
+                    votes[pid] = target_id
                 else:
-                    game_logger.log(f"玩家 {pid} 弃票")
-                     
-            # Tally PK
-            if not pk_votes:
-                 game_logger.log("PK无人投票，平安日。")
-                 return
-                 
-            pk_counts = {}
-            for target in pk_votes.values():
-                pk_counts[target] = pk_counts.get(target, 0) + 1
-            
-            pk_max = max(pk_counts.values())
-            pk_final = [t for t, c in pk_counts.items() if c == pk_max]
-            
-            if len(pk_final) == 1:
-                out_id = pk_final[0]
-                game_logger.log(f"玩家 {out_id} 在PK中被投票处决！", "red")
-                self.players[out_id].update_status(False)
-                
-                role_name = self.players[out_id].role.name
-                game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
-                
-                fact = f"【系统公告】第 {self.turn} 天白天，玩家 {out_id} 在PK中被投票处决，身份是 {role_name}。"
-                self.public_facts.append(fact)
-                self.broadcast(fact)
-                
-                self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name})
-                
-                # Last words
-                p = self.players[out_id]
-                statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
-                self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+                    votes[pid] = -1
+            except:
+                votes[pid] = -1
 
-                # Hunter check PK
-                if self.players[out_id].role.type == RoleType.HUNTER:
-                     game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
-                     shot_id = await self._hunter_action(out_id)
-                     if shot_id:
-                         game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
-                         self.players[shot_id].update_status(False)
-                         
-                         shot_role = self.players[shot_id].role.name
-                         game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
-                         
-                         fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
-                         self.public_facts.append(fact)
-                         self.broadcast(fact)
-                         self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
-
-                if self.check_win_condition(): return
+        # Display votes
+        for pid, target in votes.items():
+            if target == -1:
+                game_logger.log(f"玩家 {pid} 弃票", "dim")
             else:
-                game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")
-                self.log_event("vote_result_pk_tie", {"votes": pk_votes, "out": None})
+                game_logger.log(f"玩家 {pid} 投给了 {target}", "yellow")
+
+        # Determine out player
+        if votes:
+            counts = self._count_votes(votes)
+            counts = {k: v for k, v in counts.items() if k != -1}
+            
+            if counts:
+                max_votes = max(counts.values())
+                top = [pid for pid, cnt in counts.items() if cnt == max_votes]
+                
+                if len(top) == 1:
+                    out_id = top[0]
+                    self.players[out_id].update_status(False)
+                    game_logger.log(f"玩家 {out_id} 被投票处决！", "bold red")
+                    role_name = self.players[out_id].role.name
+                    game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                    fact = f"【系统公告】玩家 {out_id} 被投票处决，身份是 {role_name}。"
+                    self.public_facts.append(fact)
+                    self.broadcast(fact)
+                    self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
+                    
+                    p = self.players[out_id]
+                    statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
+                    self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+
+                    # Hunter check
+                    if self.players[out_id].role.type == RoleType.HUNTER:
+                        game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
+                        shot_id = await self._hunter_action(out_id)
+                        if shot_id:
+                            game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                            self.players[shot_id].update_status(False)
+                            
+                            shot_role = self.players[shot_id].role.name
+                            game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
+                            
+                            fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
+                            self.public_facts.append(fact)
+                            self.broadcast(fact)
+                            self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
+
+                    if self.check_win_condition():
+                        return
+                else:
+                    game_logger.log(f"投票平局，进入 PK：{top}", "yellow")
+                    # PK logic here... (same as before)
+                    
+                    pk_ids = top
+                    pk_speeches = []
+                    for pid in pk_ids:
+                        p = self.players[pid]
+                        statement = await p.speak(f"你进入PK，请发表遗言/申辩。", self.public_facts)
+                        pk_speeches.append((pid, statement))
+                    
+                    for pid, statement in pk_speeches:
+                        self.broadcast(f"玩家 {pid} (PK发言): {statement}")
+                    
+                    # PK Voting (only alive players not in PK?) Let's allow all alive players vote
+                    pk_votes = {}
+                    alive_ids = self.get_alive_players()
+                    tasks = [self.players[pid].act("PK投票", pk_ids, self.public_facts) for pid in alive_ids]
+                    results = await asyncio.gather(*tasks)
+                    for pid, resp in zip(alive_ids, results):
+                        try:
+                            target_id = int(resp)
+                            if target_id in pk_ids:
+                                pk_votes[pid] = target_id
+                            else:
+                                pk_votes[pid] = -1
+                        except:
+                            pk_votes[pid] = -1
+                    
+                    pk_counts = self._count_votes(pk_votes)
+                    pk_counts = {k: v for k, v in pk_counts.items() if k != -1}
+                    
+                    if pk_counts:
+                        max_votes = max(pk_counts.values())
+                        pk_final = [pid for pid, cnt in pk_counts.items() if cnt == max_votes]
+                        if len(pk_final) == 1:
+                            out_id = pk_final[0]
+                            self.players[out_id].update_status(False)
+                            game_logger.log(f"玩家 {out_id} 被PK投票处决！", "bold red")
+                            role_name = self.players[out_id].role.name
+                            game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                            fact = f"【系统公告】玩家 {out_id} 被PK投票处决，身份是 {role_name}。"
+                            self.public_facts.append(fact)
+                            self.broadcast(fact)
+                            
+                            self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name})
+                            
+                            # Last words
+                            p = self.players[out_id]
+                            statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
+                            self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+
+                            # Hunter check PK
+                            if self.players[out_id].role.type == RoleType.HUNTER:
+                                 game_logger.log(f"玩家 {out_id} (猎人) 被投票处决，触发技能！", "bold red")
+                                 shot_id = await self._hunter_action(out_id)
+                                 if shot_id:
+                                     game_logger.log(f"猎人开枪带走了玩家 {shot_id}！", "bold red")
+                                     self.players[shot_id].update_status(False)
+                                     
+                                     shot_role = self.players[shot_id].role.name
+                                     game_logger.log(f"被带走的玩家 {shot_id} 身份是: {shot_role}", "bold red")
+                                     
+                                     fact = f"【系统公告】猎人 {out_id} 开枪带走了玩家 {shot_id} ({shot_role})。"
+                                     self.public_facts.append(fact)
+                                     self.broadcast(fact)
+                                     self.log_event("hunter_shoot", {"hunter": out_id, "target": shot_id})
+
+                            if self.check_win_condition(): return
+                        else:
+                            game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")
+                            self.log_event("vote_result_pk_tie", {"votes": pk_votes, "out": None})
+            else:
+                game_logger.log("无人投票，平安日。", "green")
+        else:
+            game_logger.log("无人投票，平安日。", "green")
+
+    async def _hunter_action(self, hunter_id: int) -> Optional[int]:
+        hunter = self.players[hunter_id]
+        alive = self.get_alive_players()
+        alive = [p for p in alive if p != hunter_id]
+        if not alive:
+            return None
+        try:
+            resp = await hunter.act("猎人开枪", alive, self.public_facts)
+            target = int(resp)
+            if target in alive:
+                return target
+        except:
+            pass
+        return None
