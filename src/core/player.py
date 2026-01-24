@@ -54,13 +54,21 @@ class Player:
         # Get limits from config (safe fallback if config access is tricky, but client has config)
         max_tokens = self.max_memory_tokens if self.max_memory_tokens is not None else getattr(self.llm_client.config, "max_memory_tokens", 2000)
         
+        encoding = None
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
-        except:
-            encoding = tiktoken.get_encoding("gpt2") # Fallback
-            
+        except Exception:
+            try:
+                encoding = tiktoken.get_encoding("gpt2")  # Fallback
+            except Exception:
+                encoding = None
+
         def count_tokens(msgs):
-            text = "".join([str(m.get("content", "")) for m in msgs])
+            text = "".join(str(m.get("content", "")) for m in msgs)
+            if encoding is None:
+                # Offline-safe fallback: approximate tokens by word/character chunks.
+                chunks = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+                return len(chunks)
             return len(encoding.encode(text))
             
         # Always keep system prompt

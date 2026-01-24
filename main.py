@@ -10,7 +10,7 @@ app = typer.Typer()
 @app.command()
 def start(
     config_path: str = typer.Option("config/game_config.yaml", "--config", "-c", help="Path to configuration file"),
-    rounds: int = typer.Option(50, "--rounds", "-r", help="Max game rounds")
+    rounds: Optional[int] = typer.Option(None, "--rounds", "-r", help="Override max game rounds")
 ):
     """
     Start the AI Werewolf Game.
@@ -21,7 +21,8 @@ def start(
         game_logger.log("欢迎来到 AI 狼人杀！", "bold magenta")
         
         config = load_config(config_path)
-        config.game.max_turns = rounds
+        if rounds is not None:
+            config.game.max_turns = rounds
         
         engine = GameEngine(config)
         import asyncio
