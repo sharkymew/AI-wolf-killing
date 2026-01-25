@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple, cast
 from src.utils.config import AppConfig, get_active_models
 from src.core.player import Player
-from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Hunter, Villager
+from src.core.role import RoleType, Faction, create_roles_from_counts
 from src.llm.client import LLMClient
 from src.llm.mock_client import MockLLMClient
 from src.utils.logger import game_logger
@@ -57,14 +57,12 @@ class GameEngine:
         if seed is not None:
             random.seed(seed)
         
-        # Create role list
-        roles = []
+        # Create role list (registry-based for extensibility)
         r_config = self.config.game.roles
-        for _ in range(r_config.werewolf): roles.append(Werewolf())
-        for _ in range(r_config.witch): roles.append(Witch())
-        for _ in range(r_config.seer): roles.append(Seer())
-        for _ in range(r_config.hunter): roles.append(Hunter())
-        for _ in range(r_config.villager): roles.append(Villager())
+        role_counts = r_config.model_dump()
+        roles, unknown_roles = create_roles_from_counts(role_counts)
+        if unknown_roles:
+            game_logger.log(f"未识别的角色配置: {unknown_roles}，将跳过。", "yellow")
         
         random.shuffle(roles)
         
@@ -270,6 +268,7 @@ class GameEngine:
         # If mismatch, enter sequential negotiation (Sequential logic preserved for negotiation)
         game_logger.log(f"狼人意见不统一 {votes}，进入协商...", "yellow")
         
+        leader_id = wolves[0].player_id
         for round_idx in range(max_rounds):
             # Sequential voting: Wolf 1 votes -> Wolf 2 sees Wolf 1's vote and votes -> Wolf 3 sees all previous...
             current_round_votes = {}
@@ -291,9 +290,21 @@ class GameEngine:
                         other_votes_context.append(f"同伴{next_wolf.player_id}上轮选择: {votes[next_wolf.player_id]}")
                         
                 context_str = "; ".join(other_votes_context)
+                last_round_notice = ""
+                if round_idx == max_rounds - 1 and len(wolves) > 1:
+                    if wolf.player_id == leader_id:
+                        last_round_notice = (
+                            f"\n【最后一轮】你是协商中的优先跟随对象，请给出明确目标，"
+                            f"并尽量与队友形成一致。"
+                        )
+                    else:
+                        last_round_notice = (
+                            f"\n【最后一轮】为避免平局，请优先跟随队友 {leader_id} 的选择。"
+                        )
                 prompt_prefix = (
                     f"【协商中】当前协商情况：{context_str}。请做出你的选择以达成一致。\n"
                     "提醒：如果你们决定自杀（攻击队友），必须达成一致。请确保这是明智的战术决策。"
+                    f"{last_round_notice}"
                 )
                 
                 try:
@@ -325,7 +336,12 @@ class GameEngine:
         if not final_votes:
             return None
             
-        target = max(set(final_votes), key=final_votes.count)
+        target_counts = {}
+        for t in final_votes:
+            target_counts[t] = target_counts.get(t, 0) + 1
+        max_votes = max(target_counts.values())
+        top_targets = [pid for pid, cnt in target_counts.items() if cnt == max_votes]
+        target = random.choice(top_targets)
         game_logger.log(f"狼人协商超时，强制锁定多数票目标 {target}。", "red")
         return target
 
@@ -400,10 +416,15 @@ class GameEngine:
                 self.public_facts.append(fact)
             
             # Allow last words
-            for pid in dead_at_night:
-                p = self.players[pid]
-                statement = await p.speak("你被狼人杀死。请发表遗言。", self.public_facts)
-                self.broadcast(f"玩家 {pid} (遗言): {statement}")
+        for pid in dead_at_night:
+            p = self.players[pid]
+            statement = await p.speak(
+                "你被狼人杀死。请发表遗言。",
+                self.public_facts,
+                turn=self.turn,
+                alive_count=len(self.get_alive_players()),
+            )
+            self.broadcast(f"玩家 {pid} (遗言): {statement}")
             
             # Process Hunter if any dead at night (after last words)
             for pid in dead_at_night:
@@ -438,12 +459,22 @@ class GameEngine:
         is_endgame = len(alive_ids) <= 4
         
         # Let each alive player speak
+        alive_wolves = len(
+            [p for p in self.players.values() if p.is_alive and p.role.faction == Faction.WEREWOLF]
+        )
+        alive_good = len(
+            [p for p in self.players.values() if p.is_alive and p.role.faction == Faction.GOOD]
+        )
         for pid in alive_ids:
             p = self.players[pid]
             statement = await p.speak(
                 f"你是玩家 {pid}。请发表你的观点。",
                 self.public_facts,
-                is_endgame
+                is_endgame,
+                turn=self.turn,
+                alive_count=len(alive_ids),
+                alive_wolves=alive_wolves,
+                alive_good=alive_good,
             )
             speeches.append((pid, statement))
             
@@ -500,7 +531,12 @@ class GameEngine:
                     self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
                     
                     p = self.players[out_id]
-                    statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
+                    statement = await p.speak(
+                        "你被投票处决。请发表遗言。",
+                        self.public_facts,
+                        turn=self.turn,
+                        alive_count=len(self.get_alive_players()),
+                    )
                     self.broadcast(f"玩家 {out_id} (遗言): {statement}")
 
                     # Hunter check
@@ -527,9 +563,22 @@ class GameEngine:
                     
                     pk_ids = top
                     pk_speeches = []
+                    alive_wolves = len(
+                        [p for p in self.players.values() if p.is_alive and p.role.faction == Faction.WEREWOLF]
+                    )
+                    alive_good = len(
+                        [p for p in self.players.values() if p.is_alive and p.role.faction == Faction.GOOD]
+                    )
                     for pid in pk_ids:
                         p = self.players[pid]
-                        statement = await p.speak(f"你进入PK，请发表遗言/申辩。", self.public_facts)
+                        statement = await p.speak(
+                            "你进入PK，请发表遗言/申辩。",
+                            self.public_facts,
+                            turn=self.turn,
+                            alive_count=len(self.get_alive_players()),
+                            alive_wolves=alive_wolves,
+                            alive_good=alive_good,
+                        )
                         pk_speeches.append((pid, statement))
                     
                     for pid, statement in pk_speeches:
@@ -570,7 +619,12 @@ class GameEngine:
                             
                             # Last words
                             p = self.players[out_id]
-                            statement = await p.speak("你被投票处决。请发表遗言。", self.public_facts)
+                            statement = await p.speak(
+                                "你被投票处决。请发表遗言。",
+                                self.public_facts,
+                                turn=self.turn,
+                                alive_count=len(self.get_alive_players()),
+                            )
                             self.broadcast(f"玩家 {out_id} (遗言): {statement}")
 
                             # Hunter check PK
