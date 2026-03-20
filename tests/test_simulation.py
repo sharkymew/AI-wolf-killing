@@ -1,17 +1,20 @@
 import sys
 import os
-sys.path.append(os.getcwd())
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import asyncio
+import unittest
 from src.utils.config import load_config
 from src.core.game import GameEngine
 
-def test_simulation():
-    print("Starting simulation...")
-    config = load_config("config/test_config.yaml")
-    engine = GameEngine(config)
-    asyncio.run(engine.run())
-    print("Simulation finished.")
+
+class TestSimulation(unittest.IsolatedAsyncioTestCase):
+    async def test_full_game_completes(self):
+        config = load_config("config/test_config.yaml")
+        engine = GameEngine(config)
+        await engine.run()
+        self.assertTrue(engine.game_over or engine.turn > config.game.max_turns)
+        self.assertIsNotNone(engine.winner)
+
 
 if __name__ == "__main__":
-    test_simulation()
+    unittest.main()

@@ -1,4 +1,5 @@
 import os
+import warnings
 import yaml
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
@@ -26,7 +27,6 @@ class RoleConfig(BaseModel):
 class GameConfig(BaseModel):
     roles: RoleConfig = RoleConfig()
     max_turns: int = 50
-    memory_retention_turns: int = 10 # Deprecated: Keep last N turns of memory
     max_memory_tokens: int = 2000 # Max tokens for memory retention (using tiktoken)
     random_seed: Optional[int] = None
 
@@ -34,6 +34,12 @@ class AppConfig(BaseModel):
     models: List[ModelConfig]
     judge_model: Optional[ModelConfig] = None # New Judge Model
     game: GameConfig = GameConfig()
+
+def get_active_models(models: List[ModelConfig]) -> List[ModelConfig]:
+    return [m for m in models if not m.disabled]
+
+def count_players(roles: RoleConfig) -> int:
+    return roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
 
 def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     if not os.path.exists(config_path):
@@ -67,10 +73,8 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     config = AppConfig(**data)
     
     # Validation logic
-    active_models = [m for m in config.models if not m.disabled]
-    
-    roles = config.game.roles
-    total_players = roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
+    active_models = get_active_models(config.models)
+    total_players = count_players(config.game.roles)
     
     if len(active_models) < total_players:
         raise ValueError(
@@ -83,11 +87,20 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
         extra_count = len(active_models) - total_players
         # Disable the last N enabled models
         disabled_count = 0
+        auto_disabled_names = []
         for i in range(len(config.models) - 1, -1, -1):
             if not config.models[i].disabled:
                 config.models[i].disabled = True
+                auto_disabled_names.append(config.models[i].name)
                 disabled_count += 1
                 if disabled_count >= extra_count:
                     break
+        if auto_disabled_names:
+            warnings.warn(
+                f"自动禁用了多余的模型（共 {len(auto_disabled_names)} 个）：{auto_disabled_names}。"
+                f"如需使用这些模型，请增加对应角色数量。",
+                UserWarning,
+                stacklevel=2,
+            )
                     
     return config

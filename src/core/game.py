@@ -4,7 +4,7 @@ import json
 import random
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, cast
-from src.utils.config import AppConfig
+from src.utils.config import AppConfig, get_active_models
 from src.core.player import Player
 from src.core.role import RoleType, Faction, Werewolf, Witch, Seer, Hunter, Villager
 from src.llm.client import LLMClient
@@ -33,6 +33,8 @@ class GameEngine:
         self.history.append(event)
 
     def save_replay(self):
+        import os as _os
+        _os.makedirs("logs/json", exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"logs/json/replay_{timestamp}.json"
         
@@ -69,7 +71,7 @@ class GameEngine:
         random.shuffle(roles)
         
         # Assign players to models (round robin or random)
-        models = [m for m in self.config.models if not m.disabled]
+        models = get_active_models(self.config.models)
         judge_config = self.config.judge_model
         
         # Init Judge Client if config exists
@@ -217,7 +219,7 @@ class GameEngine:
             target = int(resp)
             if target in alive:
                 return target
-        except:
+        except (ValueError, TypeError):
             pass
         return None
 
@@ -252,7 +254,7 @@ class GameEngine:
                 target = int(resp)
                 if target in valid_targets:
                     return wolf.player_id, target
-            except:
+            except (ValueError, TypeError):
                 pass
             return wolf.player_id, None
 
@@ -317,7 +319,7 @@ class GameEngine:
                     target = int(resp)
                     if target in valid_targets:
                         current_round_votes[wolf.player_id] = target
-                except:
+                except (ValueError, TypeError):
                     continue
             
             # Update main votes with this round's result
@@ -361,7 +363,7 @@ class GameEngine:
             try:
                 # Tell witch who died
                 witch.receive_message(f"今晚死的是 {night_death_id} 号玩家。是否使用解药？(回答 'yes' 或 'no')")
-                
+
                 # We'll ask to save:
                 msg = f"今晚 {night_death_id} 号玩家被杀了。你有一瓶解药。输入 {night_death_id} 使用解药，输入 -1 不使用。"
                 resp = await witch.act("女巫解药", [night_death_id, -1])
@@ -369,7 +371,7 @@ class GameEngine:
                     save_target = night_death_id
                     witch_role.has_antidote = False
                     return save_target, None # Cannot use both
-            except:
+            except (ValueError, TypeError):
                 pass
         
         # Poison?
@@ -382,7 +384,7 @@ class GameEngine:
                 if target in alive_ids:
                     poison_target = target
                     witch_role.has_poison = False
-            except:
+            except (ValueError, TypeError):
                 pass
                 
         return save_target, poison_target
@@ -403,7 +405,7 @@ class GameEngine:
                 target_p = self.players[target_id]
                 identity = "好人" if target_p.role.faction == Faction.GOOD else "狼人"
                 seer.receive_message(f"查验结果：{target_id} 号玩家是 {identity}", is_private=True)
-        except:
+        except (ValueError, TypeError):
             pass
 
     async def run_day_phase(self, dead_ids: List[int]):
@@ -459,11 +461,11 @@ class GameEngine:
             p = self.players[pid]
             try:
                 # Pass public facts to act
-                resp = await p.act("投票", [id for id in alive if id != pid], self.public_facts) 
+                resp = await p.act("投票", [id for id in alive if id != pid], self.public_facts)
                 vote_target = int(resp)
                 if vote_target in alive:
                     return pid, vote_target
-            except:
+            except (ValueError, TypeError):
                 pass
             return pid, None # Abstain
 
@@ -554,7 +556,7 @@ class GameEngine:
                     vote_target = int(resp)
                     if vote_target in candidates:
                         return pid, vote_target
-                except:
+                except (ValueError, TypeError):
                     pass
                 return pid, None
 

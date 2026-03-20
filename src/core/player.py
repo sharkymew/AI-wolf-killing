@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional, Any
 from src.core.role import Role, RoleType, Faction
 from src.llm.client import LLMClient
+from src.llm.base import LLMClientProtocol
 from src.llm.prompts import PromptManager
 from rich.live import Live
 from rich.text import Text
@@ -14,9 +15,9 @@ class Player:
         self,
         player_id: int,
         role: Role,
-        llm_client: Any,
+        llm_client: LLMClientProtocol,
         model_name: str,
-        judge_client: Any = None,
+        judge_client: Optional[LLMClientProtocol] = None,
         max_memory_tokens: Optional[int] = None
     ):
         self.player_id = player_id
@@ -43,7 +44,7 @@ class Player:
         prefix = "[系统通知] " if not is_private else "[私密信息] "
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
-    def _manage_memory(self, retention_turns: int = 10):
+    def _manage_memory(self):
         """Manage memory usage by keeping system prompt and recent history using token limit."""
         if len(self.memory) <= 1:
             return
@@ -56,7 +57,7 @@ class Player:
         
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
-        except:
+        except Exception:
             encoding = tiktoken.get_encoding("gpt2") # Fallback
             
         def count_tokens(msgs):
@@ -141,9 +142,10 @@ class Player:
         self.memory.append({"role": "assistant", "content": response})
         return response
 
-    async def speak(self, context: str, public_facts: List[str] = [], is_endgame: bool = False) -> str:
+    async def speak(self, context: str, public_facts: Optional[List[str]] = None, is_endgame: bool = False) -> str:
         """Generate a public statement."""
-        
+        public_facts = public_facts or []
+
         # Construct facts section
         facts_str = "\n".join(public_facts)
         if facts_str:
@@ -158,19 +160,23 @@ class Player:
                  advice = "\n【重要战术提示】当前局势紧张。如果你是狼人，继续你的伪装，利用好人的犹豫，尝试倒打一耙或混淆视听。"
 
         prompt = f"{facts_str}现在是白天讨论阶段。\n上下文：{context}{advice}\n请发表你的观点（100字以内）："
-        
-        if getattr(self.llm_client.config, "is_reasoning", False):
-            return await self._generate_with_reasoning(prompt)
-        
-        # Normal stream
-        return await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
 
-    async def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
+        try:
+            if getattr(self.llm_client.config, "is_reasoning", False):
+                return await self._generate_with_reasoning(prompt)
+            # Normal stream
+            return await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
+        except Exception as e:
+            game_logger.log(f"玩家 {self.player_id} LLM调用失败: {e}", "red")
+            return "（发言失败）"
+
+    async def act(self, action_type: str, options: List[int], public_facts: Optional[List[str]] = None) -> str:
         """Generate a game action (vote, kill, verify, etc.)."""
+        public_facts = public_facts or []
         # Add abstain option explicitly
         options_with_abstain = options + [-1]
         options_str = str(options)
-        
+
         # Construct facts section
         facts_str = "\n".join(public_facts)
         if facts_str:
@@ -208,35 +214,39 @@ class Player:
         
         response = ""
         # If JSON mode, we don't use 'reasoning' model feature usually, or we use it but still expect JSON.
-        # But if use_json is True, we probably want to skip the "thinking" step of _generate_with_reasoning 
+        # But if use_json is True, we probably want to skip the "thinking" step of _generate_with_reasoning
         # because the thought is inside the JSON.
-        
-        if use_json:
-            # Direct generation with JSON enforcement
-            # We assume JSON mode handles "thought" inside JSON
-            response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
-            
-            # Parse JSON
-            try:
-                # Cleanup potential markdown
-                cleaned = response.replace("```json", "").replace("```", "").strip()
-                data = json.loads(cleaned)
-                
-                thought = data.get("thought", "")
-                action = data.get("action", -1)
-                
-                if thought:
-                    game_logger.log(f"[dim]玩家 {self.player_id} 思考: {thought}[/dim]")
-                    
-                return str(action)
-            except json.JSONDecodeError:
-                game_logger.log(f"JSON解析失败，尝试回退到Regex: {response}", "yellow")
-                # Fallthrough to regex/judge
-        
-        elif getattr(self.llm_client.config, "is_reasoning", False):
-            response = (await self._generate_with_reasoning(prompt)).strip()
-        else:
-            response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
+
+        try:
+            if use_json:
+                # Direct generation with JSON enforcement
+                # We assume JSON mode handles "thought" inside JSON
+                response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
+
+                # Parse JSON
+                try:
+                    # Cleanup potential markdown
+                    cleaned = response.replace("```json", "").replace("```", "").strip()
+                    data = json.loads(cleaned)
+
+                    thought = data.get("thought", "")
+                    action = data.get("action", -1)
+
+                    if thought:
+                        game_logger.log(f"[dim]玩家 {self.player_id} 思考: {thought}[/dim]")
+
+                    return str(action)
+                except json.JSONDecodeError:
+                    game_logger.log(f"JSON解析失败，尝试回退到Regex: {response}", "yellow")
+                    # Fallthrough to regex/judge
+
+            elif getattr(self.llm_client.config, "is_reasoning", False):
+                response = (await self._generate_with_reasoning(prompt)).strip()
+            else:
+                response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
+        except Exception as e:
+            game_logger.log(f"玩家 {self.player_id} LLM行动调用失败: {e}", "red")
+            return "-1"
             
         # Robust parsing: Use Judge Model if available
         if self.judge_client:
@@ -278,7 +288,7 @@ class Player:
                 if not self.judge_client and extracted != response: # Only log if judge didn't already
                     game_logger.log(f"[dim]系统自动修正: 从 '{response}' 提取出 '{extracted}'[/dim]")
                 return extracted
-        except:
+        except Exception:
             pass
             
         return response

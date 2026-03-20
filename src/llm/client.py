@@ -38,7 +38,6 @@ class LLMClient:
         for attempt in range(retries):
             try:
                 if stream_callback:
-                    # Stream mode
                     kwargs["stream"] = True
                     stream = await self.client.chat.completions.create(**kwargs)
                     
@@ -48,9 +47,12 @@ class LLMClient:
                         if content:
                             full_content += content
                             stream_callback(content)
-                    return full_content
+                    if full_content:
+                        return full_content
+                    kwargs["stream"] = False
+                    response = await self.client.chat.completions.create(**kwargs)
+                    return response.choices[0].message.content or ""
                 else:
-                    # Non-stream mode
                     kwargs["stream"] = False
                     response = await self.client.chat.completions.create(**kwargs)
                     return response.choices[0].message.content or ""
@@ -62,6 +64,6 @@ class LLMClient:
                     await asyncio.sleep(2 * (attempt + 1)) # Exponential backoff
                 else:
                     self.logger.error(f"Error calling LLM {self.config.name} after {retries} attempts: {e}")
-                    return f"Error: {str(e)}"
-        
-        return f"Error: {str(last_exception)}"
+                    raise
+
+        raise RuntimeError(f"LLM {self.config.name} failed after {retries} attempts: {last_exception}")

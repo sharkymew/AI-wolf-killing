@@ -34,7 +34,7 @@ class MockLLMClient:
                 if match:
                     options = [int(x.strip()) for x in match.group(1).split(',')]
                     return str(random.choice(options))
-            except:
+            except (ValueError, TypeError, IndexError):
                 pass
             return "1"
 

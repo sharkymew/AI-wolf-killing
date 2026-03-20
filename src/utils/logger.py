@@ -7,9 +7,8 @@ class GameLogger:
     def __init__(self):
         self.console = Console()
         
-        # Ensure log directories exist
+        # Ensure log directory exists
         os.makedirs("logs/text_logs", exist_ok=True)
-        os.makedirs("logs/json", exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = f"logs/text_logs/game_{timestamp}.txt"
