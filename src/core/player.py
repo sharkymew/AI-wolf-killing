@@ -1,7 +1,6 @@
 from typing import List, Dict, Optional, Any
 from src.core.role import Role, RoleType, Faction
 from src.llm.client import LLMClient
-from src.llm.base import LLMClientProtocol
 from src.llm.prompts import PromptManager
 from rich.live import Live
 from rich.text import Text
@@ -15,9 +14,9 @@ class Player:
         self,
         player_id: int,
         role: Role,
-        llm_client: LLMClientProtocol,
+        llm_client: Any,
         model_name: str,
-        judge_client: Optional[LLMClientProtocol] = None,
+        judge_client: Any = None,
         max_memory_tokens: Optional[int] = None
     ):
         self.player_id = player_id
@@ -44,7 +43,7 @@ class Player:
         prefix = "[系统通知] " if not is_private else "[私密信息] "
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
-    def _manage_memory(self):
+    def _manage_memory(self, retention_turns: int = 10):
         """Manage memory usage by keeping system prompt and recent history using token limit."""
         if len(self.memory) <= 1:
             return
@@ -55,13 +54,21 @@ class Player:
         # Get limits from config (safe fallback if config access is tricky, but client has config)
         max_tokens = self.max_memory_tokens if self.max_memory_tokens is not None else getattr(self.llm_client.config, "max_memory_tokens", 2000)
         
+        encoding = None
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
         except Exception:
-            encoding = tiktoken.get_encoding("gpt2") # Fallback
-            
+            try:
+                encoding = tiktoken.get_encoding("gpt2")  # Fallback
+            except Exception:
+                encoding = None
+
         def count_tokens(msgs):
-            text = "".join([str(m.get("content", "")) for m in msgs])
+            text = "".join(str(m.get("content", "")) for m in msgs)
+            if encoding is None:
+                # Offline-safe fallback: approximate tokens by word/character chunks.
+                chunks = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+                return len(chunks)
             return len(encoding.encode(text))
             
         # Always keep system prompt
@@ -142,10 +149,18 @@ class Player:
         self.memory.append({"role": "assistant", "content": response})
         return response
 
-    async def speak(self, context: str, public_facts: Optional[List[str]] = None, is_endgame: bool = False) -> str:
+    async def speak(
+        self,
+        context: str,
+        public_facts: List[str] = [],
+        is_endgame: bool = False,
+        turn: Optional[int] = None,
+        alive_count: Optional[int] = None,
+        alive_wolves: Optional[int] = None,
+        alive_good: Optional[int] = None,
+    ) -> str:
         """Generate a public statement."""
-        public_facts = public_facts or []
-
+        
         # Construct facts section
         facts_str = "\n".join(public_facts)
         if facts_str:
@@ -159,24 +174,47 @@ class Player:
             else:
                  advice = "\n【重要战术提示】当前局势紧张。如果你是狼人，继续你的伪装，利用好人的犹豫，尝试倒打一耙或混淆视听。"
 
-        prompt = f"{facts_str}现在是白天讨论阶段。\n上下文：{context}{advice}\n请发表你的观点（100字以内）："
+        status_lines = []
+        if turn is not None:
+            status_lines.append(f"第{turn}天")
+        if alive_count is not None:
+            status_lines.append(f"场上还剩{alive_count}人")
+        if status_lines:
+            urgency = "相对从容"
+            if alive_count is not None:
+                if alive_count <= 4:
+                    urgency = "非常紧急"
+                elif alive_count <= 6:
+                    urgency = "比较紧张"
+            status_lines.append(f"局势{urgency}")
+        status_str = ""
+        if status_lines:
+            status_str = f"【局势信息】{'，'.join(status_lines)}。\n"
+        if (
+            self.role.faction == Faction.WEREWOLF
+            and alive_wolves is not None
+            and alive_good is not None
+        ):
+            remaining_good = max(alive_good - alive_wolves, 0)
+            status_str += f"【狼人情报】再击杀{remaining_good}名好人即可达到人数优势胜利。\n"
 
+        prompt = f"{facts_str}{status_str}现在是白天讨论阶段。\n上下文：{context}{advice}\n请发表你的观点（100字以内）："
+        
         try:
             if getattr(self.llm_client.config, "is_reasoning", False):
                 return await self._generate_with_reasoning(prompt)
             # Normal stream
             return await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
         except Exception as e:
-            game_logger.log(f"玩家 {self.player_id} LLM调用失败: {e}", "red")
+            game_logger.log(f"[dim]玩家 {self.player_id} LLM发言调用失败: {e}[/dim]", "red")
             return "（发言失败）"
 
-    async def act(self, action_type: str, options: List[int], public_facts: Optional[List[str]] = None) -> str:
+    async def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
         """Generate a game action (vote, kill, verify, etc.)."""
-        public_facts = public_facts or []
         # Add abstain option explicitly
         options_with_abstain = options + [-1]
         options_str = str(options)
-
+        
         # Construct facts section
         facts_str = "\n".join(public_facts)
         if facts_str:
@@ -214,9 +252,9 @@ class Player:
         
         response = ""
         # If JSON mode, we don't use 'reasoning' model feature usually, or we use it but still expect JSON.
-        # But if use_json is True, we probably want to skip the "thinking" step of _generate_with_reasoning
+        # But if use_json is True, we probably want to skip the "thinking" step of _generate_with_reasoning 
         # because the thought is inside the JSON.
-
+        
         try:
             if use_json:
                 # Direct generation with JSON enforcement
@@ -245,9 +283,18 @@ class Player:
             else:
                 response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
         except Exception as e:
-            game_logger.log(f"玩家 {self.player_id} LLM行动调用失败: {e}", "red")
+            game_logger.log(f"[dim]玩家 {self.player_id} LLM行动调用失败: {e}，默认弃票。[/dim]", "red")
             return "-1"
             
+        def validate_action(action_value: str) -> Optional[str]:
+            try:
+                value = int(action_value)
+            except (TypeError, ValueError):
+                return None
+            if value in options_with_abstain:
+                return str(value)
+            return None
+
         # Robust parsing: Use Judge Model if available
         if self.judge_client:
             judge_prompt = (
@@ -269,9 +316,11 @@ class Player:
                 match = re.search(r"(-?\d+)", judge_val)
                 if match:
                     extracted = match.group(1)
-                    if extracted != response.strip():
-                        game_logger.log(f"[dim]裁判判定: 从 '{response}' 提取出 '{extracted}'[/dim]")
-                    return extracted
+                    validated = validate_action(extracted)
+                    if validated is not None:
+                        if extracted != response.strip():
+                            game_logger.log(f"[dim]裁判判定: 从 '{response}' 提取出 '{extracted}'[/dim]")
+                        return validated
             except Exception as e:
                 game_logger.log(f"[dim]裁判判决失败: {e}，回退到正则提取[/dim]")
 
@@ -284,14 +333,20 @@ class Player:
             match = re.search(r"(-?\d+)(?!.*\d)", response)
             if match:
                 extracted = match.group(1)
-                # Log if we extracted something different from full response
-                if not self.judge_client and extracted != response: # Only log if judge didn't already
-                    game_logger.log(f"[dim]系统自动修正: 从 '{response}' 提取出 '{extracted}'[/dim]")
-                return extracted
+                validated = validate_action(extracted)
+                if validated is not None:
+                    # Log if we extracted something different from full response
+                    if not self.judge_client and extracted != response: # Only log if judge didn't already
+                        game_logger.log(f"[dim]系统自动修正: 从 '{response}' 提取出 '{extracted}'[/dim]")
+                    return validated
         except Exception:
             pass
-            
-        return response
+
+        default_action = "-1"
+        game_logger.log(
+            f"[dim]玩家 {self.player_id} 无法解析 {action_type} 行为，默认弃票/跳过 ({default_action})。[/dim]"
+        )
+        return default_action
 
     def update_status(self, alive: bool):
         self.is_alive = alive
