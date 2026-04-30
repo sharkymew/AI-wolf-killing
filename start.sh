@@ -35,7 +35,7 @@ echo "后端已就绪。"
 # Frontend
 echo "=== 启动前端 (Vite :5173) ==="
 cd frontend
-npx vite --host &
+./node_modules/.bin/vite --host &
 FRONTEND_PID=$!
 
 sleep 2
