@@ -1,23 +1,23 @@
 models:
-  - name: "GLM-4.7"
+  - name: "Kimi-K2.6"
     provider: "siliconflow"
     api_key: "env:SILICONFLOW_API_KEY"
     base_url: "https://api.siliconflow.cn/v1"
-    model: "Pro/zai-org/GLM-4.7"
+    model: "Pro/moonshotai/Kimi-K2.6"
     is_reasoning: true
     disabled: false
-  - name: "Qwen"
+  - name: "GLM-4.5-Air"
     provider: "siliconflow"
     api_key: "env:SILICONFLOW_API_KEY"
     base_url: "https://api.siliconflow.cn/v1"
-    model: "Qwen/Qwen3-VL-32B-Instruct"
+    model: "zai-org/GLM-4.5-Air"
     is_reasoning: true
     disabled: false
   - name: "DeepSeek1"
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -25,7 +25,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -33,7 +33,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -41,7 +41,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -49,7 +49,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -57,7 +57,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -65,7 +65,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -73,7 +73,7 @@ models:
     provider: "deepseek"
     api_key: "env:DEEPSEEK_API_KEY"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-pro"
     is_reasoning: true
     json_mode: true
     disabled: false
@@ -83,7 +83,7 @@ judge_model:
   provider: "deepseek"
   api_key: "env:DEEPSEEK_API_KEY"
   base_url: "https://api.deepseek.com"
-  model: "deepseek-chat"
+  model: "deepseek-v4-pro"
   temperature: 0.1
 
 game:

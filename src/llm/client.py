@@ -32,8 +32,6 @@ class LLMClient:
         
         if response_format:
             kwargs["response_format"] = response_format
-        elif getattr(self.config, "json_mode", False):
-            kwargs["response_format"] = {"type": "json_object"}
 
         for attempt in range(retries):
             try:
