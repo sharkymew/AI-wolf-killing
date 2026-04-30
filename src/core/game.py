@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import json
 import random
@@ -38,7 +39,8 @@ class GameEngine:
     def save_replay(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"logs/json/replay_{timestamp}.json"
-        
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
         # Create safe config dump (exclude api_key)
         safe_config = self.config.model_dump()
         for model in safe_config.get("models", []):
