@@ -1,6 +1,6 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Callable, Awaitable
 from src.core.role import Role, RoleType, Faction
-from src.llm.client import LLMClient
+from src.llm.base import LLMClientProtocol
 from src.llm.prompts import PromptManager
 from rich.live import Live
 from rich.text import Text
@@ -14,10 +14,11 @@ class Player:
         self,
         player_id: int,
         role: Role,
-        llm_client: Any,
+        llm_client: LLMClientProtocol,
         model_name: str,
-        judge_client: Any = None,
-        max_memory_tokens: Optional[int] = None
+        judge_client: Optional[LLMClientProtocol] = None,
+        max_memory_tokens: Optional[int] = None,
+        thinking_callback: Optional[Callable[[int, str], Awaitable[None]]] = None,
     ):
         self.player_id = player_id
         self.role = role
@@ -27,6 +28,7 @@ class Player:
         self.is_alive = True
         self.memory: List[Dict[str, str]] = []
         self.max_memory_tokens = max_memory_tokens
+        self.thinking_callback = thinking_callback
         
         # Initialize system prompt
         self._init_memory()
@@ -90,62 +92,56 @@ class Player:
             
         self.memory = [system_msg] + kept_msgs
 
-    async def _generate_with_stream(self, prompt: str, prefix_log: str = "") -> str:
-        """Helper to generate response with streaming output to console."""
-        # Prune memory
+    async def _generate_with_stream(self, prompt: str, prefix_log: str = "", use_stream_display: bool = True, response_format=None) -> str:
         self._manage_memory()
-        
         self.memory.append({"role": "user", "content": prompt})
-        
-        text = Text(prefix_log)
+
         full_response = ""
-        
-        # rich.Live is synchronous context manager.
-        # We cannot await inside __enter__ or __exit__.
-        # But we can await inside the body.
-        # However, stream callback is called by async generate_response.
-        # We need to update the Live display.
-        # Live display runs in a thread or loop.
-        # Simple approach: Start Live, then await generate.
-        
-        with Live(text, refresh_per_second=10, console=game_logger.console):
-            def callback(chunk):
-                nonlocal full_response
-                full_response += chunk
-                text.append(chunk)
-                
-            response = await self.llm_client.generate_response(self.memory, stream_callback=callback)
-            
+
+        if use_stream_display:
+            text = Text(prefix_log)
+            with Live(text, refresh_per_second=10, console=game_logger.console):
+                def callback(chunk):
+                    nonlocal full_response
+                    full_response += chunk
+                    text.append(chunk)
+
+                response = await self.llm_client.generate_response(self.memory, stream_callback=callback, response_format=response_format)
+        else:
+            response = await self.llm_client.generate_response(self.memory, response_format=response_format)
+            full_response = response
+
         self.memory.append({"role": "assistant", "content": response})
         return response
 
-    async def _generate_with_reasoning(self, prompt: str) -> str:
-        """
-        For reasoning models:
-        1. Ask for a thought process (hidden from public but streamed for user visibility).
-        2. Ask for the final action/statement based on the thought.
-        """
-        # Step 1: Reasoning
-        reasoning_prompt = f"{prompt}\n请先进行一步步的逻辑推理和分析，输出你的思考过程（不需要输出最终决策结果）："
-        
+    async def _generate_with_reasoning(self, prompt: str, use_stream_display: bool = True) -> str:
         game_logger.log(f"玩家 {self.player_id} ({self.role.name}) 正在思考...", "dim")
-        reasoning = await self._generate_with_stream(reasoning_prompt, f"[dim]玩家 {self.player_id} 思考过程: [/dim]")
-        
-        # Step 2: Final Action
+        reasoning = await self._generate_with_stream(
+            f"{prompt}\n请先进行一步步的逻辑推理和分析，输出你的思考过程（不需要输出最终决策结果）：",
+            f"[dim]玩家 {self.player_id} 思考过程: [/dim]",
+            use_stream_display=use_stream_display,
+        )
+        if self.thinking_callback and reasoning:
+            await self.thinking_callback(self.player_id, reasoning)
+
         final_prompt = "基于以上的思考，请给出你最终的简短决策或发言（不要包含思考过程）："
         self.memory.append({"role": "user", "content": final_prompt})
-        
-        # Stream the final response too
-        text = Text(f"玩家 {self.player_id}: ")
+
         full_response = ""
-        with Live(text, refresh_per_second=10, console=game_logger.console):
-            def callback(chunk):
-                nonlocal full_response
-                full_response += chunk
-                text.append(chunk)
-            
-            response = await self.llm_client.generate_response(self.memory, stream_callback=callback)
-            
+
+        if use_stream_display:
+            text = Text(f"玩家 {self.player_id}: ")
+            with Live(text, refresh_per_second=10, console=game_logger.console):
+                def callback(chunk):
+                    nonlocal full_response
+                    full_response += chunk
+                    text.append(chunk)
+
+                response = await self.llm_client.generate_response(self.memory, stream_callback=callback)
+        else:
+            response = await self.llm_client.generate_response(self.memory)
+            full_response = response
+
         self.memory.append({"role": "assistant", "content": response})
         return response
 
@@ -257,9 +253,10 @@ class Player:
         
         try:
             if use_json:
-                # Direct generation with JSON enforcement
-                # We assume JSON mode handles "thought" inside JSON
-                response = (await self._generate_with_stream(prompt, f"玩家 {self.player_id} (行动): ")).strip()
+                response = (await self._generate_with_stream(
+                    prompt, f"玩家 {self.player_id} (行动): ",
+                    response_format={"type": "json_object"},
+                )).strip()
 
                 # Parse JSON
                 try:
