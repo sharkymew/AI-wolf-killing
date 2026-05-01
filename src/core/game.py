@@ -88,19 +88,19 @@ class GameEngine:
         personality_keys = list(PERSONALITIES.keys())
         random.shuffle(personality_keys)
 
+        async def on_thinking(pid, text):
+            await self._emit("player_thinking", {"player_id": pid, "text": text})
+
         player_roles = {}
         for i, role in enumerate(roles):
             player_id = i + 1
             model_config = models[i % len(models)]
             personality = personality_keys[i % len(personality_keys)]
-            
+
             if model_config.provider == "mock":
                 client = MockLLMClient(model_config)
             else:
                 client = LLMClient(model_config)
-                
-            async def on_thinking(pid, text):
-                await self._emit("player_thinking", {"player_id": pid, "text": text})
 
             player = Player(
                 player_id,
@@ -186,8 +186,9 @@ class GameEngine:
 
             self.turn += 1
             if self.turn > self.config.game.max_turns:
-                game_logger.log("达到最大回合数，游戏平局结束。", "red")
-                self.winner = "Draw"
+                if not self.check_win_condition():
+                    game_logger.log("达到最大回合数，游戏平局结束。", "red")
+                    self.winner = "Draw"
                 break
 
         game_logger.log(f"\n游戏结束！获胜方：{self.winner}", "bold red reverse")
@@ -309,8 +310,7 @@ class GameEngine:
             
         # If mismatch, enter sequential negotiation (Sequential logic preserved for negotiation)
         game_logger.log(f"狼人意见不统一 {votes}，进入协商...", "yellow")
-        
-        leader_id = wolves[0].player_id
+
         for round_idx in range(max_rounds):
             # Sequential voting: Wolf 1 votes -> Wolf 2 sees Wolf 1's vote and votes -> Wolf 3 sees all previous...
             current_round_votes = {}
@@ -434,6 +434,8 @@ class GameEngine:
 
         # Cannot protect same player two nights in a row
         valid_targets = [pid for pid in alive_ids if pid != guard.role.last_protected]
+        if not valid_targets:
+            valid_targets = alive_ids  # fallback if only one player exists
 
         try:
             resp = await guard.act("守卫守护", valid_targets)
@@ -531,10 +533,9 @@ class GameEngine:
 
         # Daytime discussion
         game_logger.log("\n开始自由讨论...", "cyan")
-        speeches = []
         alive_ids = self.get_alive_players()
         is_endgame = len(alive_ids) <= 4
-        
+
         # Let each alive player speak
         alive_wolves = len(
             [p for p in self.players.values() if p.is_alive and p.role.faction == Faction.WEREWOLF]
@@ -555,7 +556,6 @@ class GameEngine:
             )
             await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "discussion"})
             self.broadcast(f"玩家 {pid}: {statement}")
-            speeches.append((pid, statement))
 
         if self.check_win_condition():
             return

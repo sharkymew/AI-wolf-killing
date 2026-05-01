@@ -41,6 +41,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+current_game_task = None
 
 
 async def game_event_handler(event_type: str, data: dict):
@@ -49,14 +50,18 @@ async def game_event_handler(event_type: str, data: dict):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    global current_game_task
     await manager.connect(ws)
     try:
         while True:
             msg = await ws.receive_text()
             cmd = json.loads(msg)
             if cmd.get("action") == "start":
+                if current_game_task and not current_game_task.done():
+                    await ws.send_text(json.dumps({"type": "error", "data": {"message": "游戏已在运行中"}}, ensure_ascii=False))
+                    continue
                 config_path = cmd.get("config", "config/game_config.yaml")
-                asyncio.create_task(run_game(config_path))
+                current_game_task = asyncio.create_task(run_game(config_path))
     except WebSocketDisconnect:
         manager.disconnect(ws)
     except Exception:

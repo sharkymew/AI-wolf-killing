@@ -43,8 +43,7 @@ class Player:
         prefix = "[系统通知] " if not is_private else "[私密信息] "
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
-    def _manage_memory(self, retention_turns: int = 10):
-        """Manage memory usage by keeping system prompt and recent history using token limit."""
+    def _manage_memory(self):
         if len(self.memory) <= 1:
             return
             
@@ -271,6 +270,8 @@ class Player:
 
                     if thought:
                         game_logger.log(f"[dim]玩家 {self.player_id} 思考: {thought}[/dim]")
+                        if self.thinking_callback:
+                            await self.thinking_callback(self.player_id, thought)
 
                     return str(action)
                 except json.JSONDecodeError:
