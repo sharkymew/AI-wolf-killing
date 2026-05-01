@@ -199,6 +199,12 @@ function handleEvent(type, data) {
       break
     }
 
+    case 'token_usage': {
+      const p = players.value.find(p => p.id === data.player_id)
+      if (p) Object.assign(p, data)
+      break
+    }
+
     case 'game_over':
       winner.value = data.winner
       gameStarted.value = false

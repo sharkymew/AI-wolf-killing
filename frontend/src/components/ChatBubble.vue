@@ -7,6 +7,8 @@
       <div class="bubble-header">
         <span class="player-name">#{{ player.id }} {{ player.role_name }}</span>
         <span class="model-tag">{{ player.model }}</span>
+        <span v-if="player.last_call_tokens" class="token-tag">{{ formatTokens(player.last_call_tokens) }}</span>
+        <span v-if="player.compressions" class="compress-tag">压缩×{{ player.compressions }}</span>
       </div>
       <div class="speech-text">{{ speech }}</div>
       <div v-if="thinking" class="thinking-section">
@@ -45,8 +47,12 @@ const showInfo = ref(false)
 const factionClass = computed(() => props.player.faction)
 const factionLabel = computed(() => props.player.faction === 'werewolf' ? '狼人阵营' : '好人阵营')
 
-const roleIcons = { '狼人': '🐺', '女巫': '🧪', '预言家': '🔮', '猎人': '🔫', '平民': '👤' }
+const roleIcons = { '狼人': '🐺', '女巫': '🧪', '预言家': '🔮', '猎人': '🔫', '守卫': '🛡️', '白痴': '🤡', '平民': '👤' }
 const roleIcon = computed(() => roleIcons[props.player.role_name] || '❓')
+function formatTokens(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return n.toString()
+}
 </script>
 
 <style scoped>
@@ -90,6 +96,20 @@ const roleIcon = computed(() => roleIcons[props.player.role_name] || '❓')
   font-size: 11px;
   color: #666;
   background: #1a1a2e;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.token-tag {
+  font-size: 10px;
+  color: #888;
+  background: #1a2a1a;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.compress-tag {
+  font-size: 10px;
+  color: #e67e22;
+  background: #2a1a10;
   padding: 2px 6px;
   border-radius: 4px;
 }

@@ -14,6 +14,10 @@
               <span class="p-name">#{{ p.id }} {{ p.role_name }}</span>
               <span class="p-model">{{ p.model }}</span>
               <span class="p-status">{{ p.is_alive ? '🟢' : '💀' }}</span>
+              <div v-if="p.current_tokens" class="token-bar-wrap">
+                <div class="token-bar" :style="{ width: p.percent + '%' }" :class="tokenBarClass(p.percent)"></div>
+                <span class="token-text">{{ formatTokens(p.current_tokens) }}/{{ formatTokens(p.max_tokens) }} ({{ formatTokens(p.total_tokens_used) }}总)</span>
+              </div>
             </div>
           </div>
         </div>
@@ -40,9 +44,11 @@ defineProps({
 })
 defineEmits(['close'])
 
-const icons = { '狼人': '🐺', '女巫': '🧪', '预言家': '🔮', '猎人': '🔫', '平民': '👤' }
+const icons = { '狼人': '🐺', '女巫': '🧪', '预言家': '🔮', '猎人': '🔫', '守卫': '🛡️', '白痴': '🤡', '平民': '👤' }
 function roleIcon(name) { return icons[name] || '❓' }
 function fmt(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }) }
+function formatTokens(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n }
+function tokenBarClass(pct) { return pct > 80 ? 'danger' : pct > 50 ? 'warn' : 'ok' }
 </script>
 
 <style scoped>
@@ -99,6 +105,33 @@ function fmt(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: fal
 .p-name { font-weight: bold; flex: 1; }
 .p-model { font-size: 11px; color: #666; }
 .p-status { font-size: 12px; }
+.player-row { flex-wrap: wrap; }
+.token-bar-wrap {
+  width: 100%;
+  margin-top: 4px;
+  position: relative;
+  height: 16px;
+  background: #111;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.token-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s;
+}
+.token-bar.ok { background: #2ecc71; }
+.token-bar.warn { background: #f39c12; }
+.token-bar.danger { background: #e74c3c; }
+.token-text {
+  position: absolute;
+  inset: 0;
+  font-size: 10px;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .event-row {
   display: flex;
   gap: 8px;
