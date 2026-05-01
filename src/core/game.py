@@ -592,6 +592,7 @@ class GameEngine:
                         self.players[out_id].update_status(False)
                         game_logger.log(f"玩家 {out_id} 被投票处决！", "bold red")
                         game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                        await self._emit("player_dead", {"player_id": out_id, "role_name": role_name})
                         fact = f"【系统公告】玩家 {out_id} 被投票处决，身份是 {role_name}。"
                         self.public_facts.append(fact)
                         self.broadcast(fact)
@@ -664,6 +665,7 @@ class GameEngine:
                                 self.players[out_id].update_status(False)
                                 game_logger.log(f"玩家 {out_id} 被PK投票处决！", "bold red")
                                 game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                                await self._emit("player_dead", {"player_id": out_id, "role_name": role_name})
                                 fact = f"【系统公告】玩家 {out_id} 被PK投票处决，身份是 {role_name}。"
                                 self.public_facts.append(fact)
                                 self.broadcast(fact)
