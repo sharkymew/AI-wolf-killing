@@ -58,6 +58,7 @@ class LLMClient:
             except Exception as e:
                 last_exception = e
                 self.logger.warning(f"LLM {self.config.name} request failed (Attempt {attempt+1}/{retries}): {e}")
+                kwargs.pop("stream", None)
                 if attempt < retries - 1:
                     await asyncio.sleep(2 * (attempt + 1)) # Exponential backoff
                 else:

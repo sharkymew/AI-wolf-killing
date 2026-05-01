@@ -90,8 +90,8 @@ class Player:
         self.memory = [system_msg] + kept_msgs
 
     async def _generate_with_stream(self, prompt: str, prefix_log: str = "", use_stream_display: bool = True, response_format=None) -> str:
-        self._manage_memory()
         self.memory.append({"role": "user", "content": prompt})
+        self._manage_memory()
 
         full_response = ""
 
@@ -154,11 +154,11 @@ class Player:
     ) -> str:
         """Generate a public statement."""
         
-        # Construct facts section
-        facts_str = "\n".join(public_facts)
+        recent_facts = public_facts[-10:] if len(public_facts) > 10 else public_facts
+        facts_str = "\n".join(recent_facts)
         if facts_str:
             facts_str = f"【已证实事实（必须遵守）】\n{facts_str}\n"
-        
+
         # Endgame advice
         advice = ""
         if is_endgame:
@@ -212,11 +212,11 @@ class Player:
         options_with_abstain = options + [-1]
         options_str = str(options)
         
-        # Construct facts section
-        facts_str = "\n".join(public_facts)
+        recent_facts = public_facts[-10:] if len(public_facts) > 10 else public_facts
+        facts_str = "\n".join(recent_facts)
         if facts_str:
             facts_str = f"【已证实事实（必须遵守）】\n{facts_str}\n"
-            
+
         # Check if JSON mode is enabled for this model
         use_json = getattr(self.llm_client.config, "json_mode", False)
         
