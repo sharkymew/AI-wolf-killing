@@ -120,15 +120,37 @@ function handleEvent(type, data) {
       break
     }
 
+    case 'night_witch_action': {
+      const p = players.value.find(p => p.id === data.player_id)
+      let speech = ''
+      if (data.save_id) speech = `🧪 使用解药，救活了玩家 ${data.save_id}`
+      if (data.poison_id) speech = `☠️ 使用毒药，毒杀了玩家 ${data.poison_id}`
+      if (!data.save_id && !data.poison_id) speech = '选择不使用药水'
+      if (p) addSpeech(p, speech)
+      break
+    }
+
     case 'night_guard':
       addBanner('guard', `🛡️ 守卫守护了玩家 ${data.target}`)
       addRawEvent('guard', `守卫(${data.guard_id})守护玩家${data.target}`)
       break
 
+    case 'night_guard_action': {
+      const p = players.value.find(p => p.id === data.player_id)
+      if (p) addSpeech(p, `🛡️ 守护了玩家 ${data.target}`)
+      break
+    }
+
     case 'night_seer':
       addBanner('seer', `🔮 预言家查验玩家 ${data.target}: ${data.result}`)
       addRawEvent('seer', `预言家查验玩家${data.target}: ${data.result}`)
       break
+
+    case 'night_seer_action': {
+      const p = players.value.find(p => p.id === data.player_id)
+      if (p) addSpeech(p, `🔮 查验了玩家 ${data.target}，结果是: ${data.result}`)
+      break
+    }
 
     case 'night_result':
       if (data.dead && data.dead.length > 0) {

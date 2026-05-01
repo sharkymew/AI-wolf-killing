@@ -19,6 +19,7 @@ class Player:
         judge_client: Optional[LLMClientProtocol] = None,
         max_memory_tokens: Optional[int] = None,
         thinking_callback: Optional[Callable[[int, str], Awaitable[None]]] = None,
+        personality: str = "",
     ):
         self.player_id = player_id
         self.role = role
@@ -29,15 +30,12 @@ class Player:
         self.memory: List[Dict[str, str]] = []
         self.max_memory_tokens = max_memory_tokens
         self.thinking_callback = thinking_callback
-        
-        # Initialize system prompt
+        self.personality = personality
+
         self._init_memory()
 
     def _init_memory(self):
-        # Cast role type to satisfy linter or just pass raw value if enum mismatch
-        # Actually RoleType is defined in core/role.py and also in prompts.py separately?
-        # Let's check prompts.py imports. Assuming simple string pass works or re-import.
-        system_prompt = PromptManager.get_system_prompt(self.role.type, self.player_id)
+        system_prompt = PromptManager.get_system_prompt(self.role.type, self.player_id, self.personality)
         self.memory.append({"role": "system", "content": system_prompt})
 
     def receive_message(self, message: str, is_private: bool = False):

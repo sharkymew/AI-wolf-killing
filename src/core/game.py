@@ -10,6 +10,7 @@ from src.core.player import Player
 from src.core.role import RoleType, Faction, create_roles_from_counts
 from src.llm.client import LLMClient
 from src.llm.mock_client import MockLLMClient
+from src.llm.prompts import PERSONALITIES
 from src.utils.logger import game_logger
 
 class GameEngine:
@@ -83,10 +84,15 @@ class GameEngine:
             else:
                  judge_client = LLMClient(judge_config)
         
+        # Randomly assign personalities
+        personality_keys = list(PERSONALITIES.keys())
+        random.shuffle(personality_keys)
+
         player_roles = {}
         for i, role in enumerate(roles):
             player_id = i + 1
             model_config = models[i % len(models)]
+            personality = personality_keys[i % len(personality_keys)]
             
             if model_config.provider == "mock":
                 client = MockLLMClient(model_config)
@@ -104,11 +110,12 @@ class GameEngine:
                 judge_client,
                 self.config.game.max_memory_tokens,
                 thinking_callback=on_thinking,
+                personality=personality,
             )
             self.players[player_id] = player
             player_roles[player_id] = role.name
-            
-            game_logger.log(f"玩家 {player_id} 分配角色: [bold]{role.name}[/bold] (模型: {model_config.name})", "green")
+
+            game_logger.log(f"玩家 {player_id} [{personality}] 分配角色: [bold]{role.name}[/bold] (模型: {model_config.name})", "green")
 
         self.log_event("init", {"roles": player_roles})
 
@@ -158,6 +165,7 @@ class GameEngine:
                 "faction": p.role.faction.value,
                 "model": p.model_name,
                 "is_alive": p.is_alive,
+                "personality": p.personality,
             })
         await self._emit("game_init", {"players": players_data})
 
@@ -265,9 +273,15 @@ class GameEngine:
                 pass
             return wolf.player_id, None
 
-        # Add specific advice about self-kill
+        # Build known info context
+        known_info = ""
+        if self.public_facts:
+            known_info = "【当前已知信息】\n" + "\n".join(self.public_facts[-5:]) + "\n"
+
         advice = (
+            f"{known_info}"
             "你可以选择攻击包括自己在内的任何存活玩家。\n"
+            "【重要】请根据已知信息做出独立判断。相信自己的分析，选择你认为最应该击杀的目标。\n"
             "注意：自杀（攻击狼人队友）是一种高风险高回报的战术，通常用于骗取女巫解药或混淆视听。\n"
             "请慎重选择，除非有明确战术目的，否则建议优先攻击好人。"
         )
@@ -320,18 +334,15 @@ class GameEngine:
                 context_str = "; ".join(other_votes_context)
                 last_round_notice = ""
                 if round_idx == max_rounds - 1 and len(wolves) > 1:
-                    if wolf.player_id == leader_id:
-                        last_round_notice = (
-                            f"\n【最后一轮】你是协商中的优先跟随对象，请给出明确目标，"
-                            f"并尽量与队友形成一致。"
-                        )
-                    else:
-                        last_round_notice = (
-                            f"\n【最后一轮】为避免平局，请优先跟随队友 {leader_id} 的选择。"
-                        )
+                    last_round_notice = (
+                        "\n【最后一轮】这轮之后将强制锁定目标。请认真考虑队友的观点，"
+                        "但最终还是要相信自己的判断。如果你有充分理由坚持自己的目标，可以保持不变。"
+                    )
                 prompt_prefix = (
-                    f"【协商中】当前协商情况：{context_str}。请做出你的选择以达成一致。\n"
-                    "提醒：如果你们决定自杀（攻击队友），必须达成一致。请确保这是明智的战术决策。"
+                    f"【协商中】当前协商情况：{context_str}。\n"
+                    "请基于已知信息和你的独立判断做出选择。不要盲目跟从队友——"
+                    "如果你认为自己的目标更有道理，请坚持。批判性地评估每个选项。\n"
+                    "只有在队友理由充分时才考虑改变你的选择。"
                     f"{last_round_notice}"
                 )
                 
@@ -406,6 +417,11 @@ class GameEngine:
             except (ValueError, TypeError):
                 poison_id = None
 
+        await self._emit("night_witch_action", {
+            "player_id": witch.player_id,
+            "save_id": save_id,
+            "poison_id": poison_id,
+        })
         return save_id, poison_id
 
     async def _guard_action(self) -> Optional[int]:
@@ -425,12 +441,13 @@ class GameEngine:
             if target in valid_targets:
                 guard.role.last_protected = target
                 await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
+                await self._emit("night_guard_action", {"player_id": guard.player_id, "target": target})
                 return target
             elif target != -1 and target in alive_ids:
-                # Tried to protect same player twice in a row, allow it but log warning
                 game_logger.log(f"守卫试图连续两晚守护同一玩家 {target}，仍然生效。", "yellow")
                 guard.role.last_protected = target
                 await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
+                await self._emit("night_guard_action", {"player_id": guard.player_id, "target": target})
                 return target
         except (ValueError, TypeError):
             pass
@@ -453,6 +470,7 @@ class GameEngine:
                 identity = "好人" if target_p.role.faction == Faction.GOOD else "狼人"
                 seer.receive_message(f"查验结果：{target_id} 号玩家是 {identity}", is_private=True)
                 await self._emit("night_seer", {"target": target_id, "result": identity})
+                await self._emit("night_seer_action", {"player_id": seer.player_id, "target": target_id, "result": identity})
         except (ValueError, TypeError):
             pass
 
