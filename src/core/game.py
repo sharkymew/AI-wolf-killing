@@ -236,6 +236,7 @@ class GameEngine:
             if p.role.type == RoleType.HUNTER and p.role.can_shoot:
                 if reason == "poison":
                     game_logger.log(f"玩家 {pid} (猎人) 被毒死，无法开枪。", "dim")
+                    p.role.can_shoot = False
                 else:
                     shot_id = await self._trigger_hunter_death(pid, "死亡")
                     if shot_id:
@@ -272,6 +273,7 @@ class GameEngine:
                     return wolf.player_id, target
             except (ValueError, TypeError):
                 pass
+            game_logger.log(f"狼人 {wolf.player_id} 选择失败，已跳过。", "dim")
             return wolf.player_id, None
 
         # Build known info context
@@ -393,6 +395,7 @@ class GameEngine:
         game_logger.log("女巫正在行动...", "dim")
         save_id = None
         poison_id = None
+        save_parse_failed = False
 
         # Witch can save only if someone is killed and antidote unused
         if target_id and witch.role.has_antidote:
@@ -402,11 +405,12 @@ class GameEngine:
                     save_id = target_id
                     witch.role.has_antidote = False
             except (ValueError, TypeError):
-                pass
+                save_parse_failed = True
+                game_logger.log("女巫救人响应无法解析，本轮跳过毒人。", "yellow")
 
         # Witch can poison someone (only once, and not if used antidote this night)
         alive_ids = self.get_alive_players()
-        if witch.role.has_poison and save_id is None:
+        if witch.role.has_poison and save_id is None and not save_parse_failed:
             try:
                 resp = await witch.act("女巫毒人", alive_ids)
                 poison_id = int(resp)
@@ -441,12 +445,6 @@ class GameEngine:
             resp = await guard.act("守卫守护", valid_targets)
             target = int(resp)
             if target in valid_targets:
-                guard.role.last_protected = target
-                await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
-                await self._emit("night_guard_action", {"player_id": guard.player_id, "target": target})
-                return target
-            elif target != -1 and target in alive_ids:
-                game_logger.log(f"守卫试图连续两晚守护同一玩家 {target}，仍然生效。", "yellow")
                 guard.role.last_protected = target
                 await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
                 await self._emit("night_guard_action", {"player_id": guard.player_id, "target": target})
@@ -684,7 +682,11 @@ class GameEngine:
                             if self.check_win_condition(): return
                         else:
                             game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")
+                            fact = f"【系统公告】PK投票再次平票（{' 和 '.join(map(str, pk_final))}），无人出局。"
+                            self.public_facts.append(fact)
+                            self.broadcast(fact)
                             self.log_event("vote_result_pk_tie", {"votes": pk_votes, "out": None})
+                            await self._emit("vote_result_pk_tie", {"votes": pk_votes, "out": None})
             else:
                 game_logger.log("无人投票，平安日。", "green")
         else:
