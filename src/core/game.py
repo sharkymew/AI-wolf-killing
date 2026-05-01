@@ -195,17 +195,23 @@ class GameEngine:
         if target_id:
             await self._emit("night_wolf_kill", {"target": target_id})
 
-        # 2. Witch Action
+        # 2. Guard Action
+        guard_id = await self._guard_action()
+
+        # 3. Witch Action
         save_id, poison_id = await self._witch_action(target_id)
         await self._emit("night_witch", {"save": save_id, "poison": poison_id})
 
-        # 3. Seer Action
+        # 4. Seer Action
         await self._seer_action()
-        
+
         # Calculate deaths with reasons
         deaths = {} # pid -> reason (wolf/poison)
-        
-        if target_id and target_id != save_id:
+
+        # Guard protection blocks wolf kill
+        if target_id and target_id == guard_id:
+            game_logger.log(f"守卫守护了玩家 {target_id}，狼刀无效。", "cyan")
+        elif target_id and target_id != save_id:
             deaths[target_id] = "wolf"
             
         if poison_id:
@@ -402,6 +408,34 @@ class GameEngine:
 
         return save_id, poison_id
 
+    async def _guard_action(self) -> Optional[int]:
+        guard = next((p for p in self.players.values() if p.role.type == RoleType.GUARD), None)
+        if not guard or not guard.is_alive:
+            return None
+
+        game_logger.log("守卫正在行动...", "dim")
+        alive_ids = self.get_alive_players()
+
+        # Cannot protect same player two nights in a row
+        valid_targets = [pid for pid in alive_ids if pid != guard.role.last_protected]
+
+        try:
+            resp = await guard.act("守卫守护", valid_targets)
+            target = int(resp)
+            if target in valid_targets:
+                guard.role.last_protected = target
+                await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
+                return target
+            elif target != -1 and target in alive_ids:
+                # Tried to protect same player twice in a row, allow it but log warning
+                game_logger.log(f"守卫试图连续两晚守护同一玩家 {target}，仍然生效。", "yellow")
+                guard.role.last_protected = target
+                await self._emit("night_guard", {"guard_id": guard.player_id, "target": target})
+                return target
+        except (ValueError, TypeError):
+            pass
+        return None
+
     async def _seer_action(self):
         seer = next((p for p in self.players.values() if p.role.type == RoleType.SEER), None)
         if not seer or not seer.is_alive:
@@ -526,26 +560,37 @@ class GameEngine:
                 
                 if len(top) == 1:
                     out_id = top[0]
-                    self.players[out_id].update_status(False)
-                    game_logger.log(f"玩家 {out_id} 被投票处决！", "bold red")
                     role_name = self.players[out_id].role.name
-                    game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
-                    fact = f"【系统公告】玩家 {out_id} 被投票处决，身份是 {role_name}。"
-                    self.public_facts.append(fact)
-                    self.broadcast(fact)
-                    self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
-                    await self._emit("day_execute", {"player_id": out_id, "role_name": role_name, "type": "vote"})
 
-                    p = self.players[out_id]
-                    statement = await p.speak(
-                        "你被投票处决。请发表遗言。",
-                        self.public_facts,
-                        turn=self.turn,
-                        alive_count=len(self.get_alive_players()),
-                    )
-                    self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+                    # Idiot reveal: voted out but stays alive
+                    if self.players[out_id].role.type == RoleType.IDIOT and not self.players[out_id].role.is_revealed:
+                        self.players[out_id].role.is_revealed = True
+                        game_logger.log(f"玩家 {out_id} 是白痴，亮明身份，留在场上！", "bold yellow")
+                        fact = f"【系统公告】玩家 {out_id} 被投票处决，但其身份是白痴，亮明身份留在场上。"
+                        self.public_facts.append(fact)
+                        self.broadcast(fact)
+                        self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name, "idiot": True})
+                        await self._emit("idiot_reveal", {"player_id": out_id, "role_name": role_name})
+                    else:
+                        self.players[out_id].update_status(False)
+                        game_logger.log(f"玩家 {out_id} 被投票处决！", "bold red")
+                        game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                        fact = f"【系统公告】玩家 {out_id} 被投票处决，身份是 {role_name}。"
+                        self.public_facts.append(fact)
+                        self.broadcast(fact)
+                        self.log_event("vote_result", {"votes": votes, "out": out_id, "role": role_name})
+                        await self._emit("day_execute", {"player_id": out_id, "role_name": role_name, "type": "vote"})
 
-                    await self._trigger_hunter_death(out_id, "被投票处决")
+                        p = self.players[out_id]
+                        statement = await p.speak(
+                            "你被投票处决。请发表遗言。",
+                            self.public_facts,
+                            turn=self.turn,
+                            alive_count=len(self.get_alive_players()),
+                        )
+                        self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+
+                        await self._trigger_hunter_death(out_id, "被投票处决")
 
                     if self.check_win_condition():
                         return
@@ -588,27 +633,35 @@ class GameEngine:
                         pk_final = [pid for pid, cnt in pk_counts.items() if cnt == max_votes]
                         if len(pk_final) == 1:
                             out_id = pk_final[0]
-                            self.players[out_id].update_status(False)
-                            game_logger.log(f"玩家 {out_id} 被PK投票处决！", "bold red")
                             role_name = self.players[out_id].role.name
-                            game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
-                            fact = f"【系统公告】玩家 {out_id} 被PK投票处决，身份是 {role_name}。"
-                            self.public_facts.append(fact)
-                            self.broadcast(fact)
-                            
-                            self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name})
-                            
-                            # Last words
-                            p = self.players[out_id]
-                            statement = await p.speak(
-                                "你被投票处决。请发表遗言。",
-                                self.public_facts,
-                                turn=self.turn,
-                                alive_count=len(self.get_alive_players()),
-                            )
-                            self.broadcast(f"玩家 {out_id} (遗言): {statement}")
 
-                            await self._trigger_hunter_death(out_id, "被投票处决")
+                            if self.players[out_id].role.type == RoleType.IDIOT and not self.players[out_id].role.is_revealed:
+                                self.players[out_id].role.is_revealed = True
+                                game_logger.log(f"玩家 {out_id} 是白痴，亮明身份，留在场上！", "bold yellow")
+                                fact = f"【系统公告】玩家 {out_id} 被PK投票处决，但其身份是白痴，亮明身份留在场上。"
+                                self.public_facts.append(fact)
+                                self.broadcast(fact)
+                                self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name, "idiot": True})
+                                await self._emit("idiot_reveal", {"player_id": out_id, "role_name": role_name})
+                            else:
+                                self.players[out_id].update_status(False)
+                                game_logger.log(f"玩家 {out_id} 被PK投票处决！", "bold red")
+                                game_logger.log(f"玩家 {out_id} 的身份是: {role_name}", "bold red")
+                                fact = f"【系统公告】玩家 {out_id} 被PK投票处决，身份是 {role_name}。"
+                                self.public_facts.append(fact)
+                                self.broadcast(fact)
+                                self.log_event("vote_result_pk", {"votes": pk_votes, "out": out_id, "role": role_name})
+
+                                p = self.players[out_id]
+                                statement = await p.speak(
+                                    "你被投票处决。请发表遗言。",
+                                    self.public_facts,
+                                    turn=self.turn,
+                                    alive_count=len(self.get_alive_players()),
+                                )
+                                self.broadcast(f"玩家 {out_id} (遗言): {statement}")
+
+                                await self._trigger_hunter_death(out_id, "被投票处决")
                             if self.check_win_condition(): return
                         else:
                             game_logger.log(f"PK再次平票 {pk_final}，无人出局。", "red")

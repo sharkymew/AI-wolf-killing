@@ -22,6 +22,8 @@ class RoleConfig(BaseModel):
     witch: int = 1
     seer: int = 1
     hunter: int = 0
+    guard: int = 0
+    idiot: int = 0
     villager: int = 2
 
 class GameConfig(BaseModel):
@@ -39,7 +41,7 @@ def get_active_models(models: List[ModelConfig]) -> List[ModelConfig]:
     return [m for m in models if not m.disabled]
 
 def count_players(roles: RoleConfig) -> int:
-    return roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.villager
+    return roles.werewolf + roles.witch + roles.seer + roles.hunter + roles.guard + roles.idiot + roles.villager
 
 def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     if not os.path.exists(config_path):

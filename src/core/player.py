@@ -207,6 +207,10 @@ class Player:
 
     async def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
         """Generate a game action (vote, kill, verify, etc.)."""
+        # Revealed Idiot cannot vote
+        if self.role.type == RoleType.IDIOT and self.role.is_revealed and "投票" in action_type:
+            return "-1"
+
         # Add abstain option explicitly
         options_with_abstain = options + [-1]
         options_str = str(options)

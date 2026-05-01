@@ -120,6 +120,11 @@ function handleEvent(type, data) {
       break
     }
 
+    case 'night_guard':
+      addBanner('guard', `🛡️ 守卫守护了玩家 ${data.target}`)
+      addRawEvent('guard', `守卫(${data.guard_id})守护玩家${data.target}`)
+      break
+
     case 'night_seer':
       addBanner('seer', `🔮 预言家查验玩家 ${data.target}: ${data.result}`)
       addRawEvent('seer', `预言家查验玩家${data.target}: ${data.result}`)
@@ -149,6 +154,11 @@ function handleEvent(type, data) {
       addRawEvent('vote', `投票: ${parts}`)
       break
     }
+
+    case 'idiot_reveal':
+      addBanner('idiot', `🤡 玩家 ${data.player_id} 是白痴！亮明身份留在场上`)
+      addRawEvent('idiot', `白痴${data.player_id}亮明身份`)
+      break
 
     case 'day_execute':
       addBanner('execute', `⚰️ 玩家 ${data.player_id} (${data.role_name}) 被投票处决`)

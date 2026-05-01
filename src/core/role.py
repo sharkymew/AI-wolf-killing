@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 from pydantic import BaseModel
 
 class RoleType(str, Enum):
@@ -7,6 +7,8 @@ class RoleType(str, Enum):
     WITCH = "witch"
     SEER = "seer"
     HUNTER = "hunter"
+    GUARD = "guard"
+    IDIOT = "idiot"
     VILLAGER = "villager"
 
 class Faction(str, Enum):
@@ -41,6 +43,18 @@ class Hunter(Role):
     faction: Faction = Faction.GOOD
     can_shoot: bool = True
 
+class Guard(Role):
+    name: str = "守卫"
+    type: RoleType = RoleType.GUARD
+    faction: Faction = Faction.GOOD
+    last_protected: Optional[int] = None
+
+class Idiot(Role):
+    name: str = "白痴"
+    type: RoleType = RoleType.IDIOT
+    faction: Faction = Faction.GOOD
+    is_revealed: bool = False
+
 class Villager(Role):
     name: str = "平民"
     type: RoleType = RoleType.VILLAGER
@@ -51,6 +65,8 @@ ROLE_REGISTRY: Dict[RoleType, Type[Role]] = {
     RoleType.WITCH: Witch,
     RoleType.SEER: Seer,
     RoleType.HUNTER: Hunter,
+    RoleType.GUARD: Guard,
+    RoleType.IDIOT: Idiot,
     RoleType.VILLAGER: Villager,
 }
 
