@@ -512,21 +512,20 @@ class GameEngine:
                 await self._emit("player_dead", {"player_id": pid, "role_name": role_name})
                 fact = f"【系统公告】玩家 {pid} 死亡，身份是 {role_name}。"
                 self.public_facts.append(fact)
-            
-            # Allow last words
-        for pid in dead_at_night:
-            p = self.players[pid]
-            statement = await p.speak(
-                "你被狼人杀死。请发表遗言。",
-                self.public_facts,
-                turn=self.turn,
-                alive_count=len(self.get_alive_players()),
-            )
-            await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "last_words"})
-            self.broadcast(f"玩家 {pid} (遗言): {statement}")
 
-            if self.check_win_condition():
-                return
+            for pid in dead_at_night:
+                p = self.players[pid]
+                statement = await p.speak(
+                    "你被狼人杀死。请发表遗言。",
+                    self.public_facts,
+                    turn=self.turn,
+                    alive_count=len(self.get_alive_players()),
+                )
+                await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "last_words"})
+                self.broadcast(f"玩家 {pid} (遗言): {statement}")
+
+                if self.check_win_condition():
+                    return
         else:
             game_logger.log("\n天亮了。昨晚是平安夜。", "green")
 
