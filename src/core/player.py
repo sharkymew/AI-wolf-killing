@@ -20,6 +20,7 @@ class Player:
         max_memory_tokens: Optional[int] = None,
         thinking_callback: Optional[Callable[[int, str], Awaitable[None]]] = None,
         personality: str = "",
+        token_callback: Optional[Callable[[int, dict], Awaitable[None]]] = None,
     ):
         self.player_id = player_id
         self.role = role
@@ -31,6 +32,9 @@ class Player:
         self.max_memory_tokens = max_memory_tokens
         self.thinking_callback = thinking_callback
         self.personality = personality
+        self.token_callback = token_callback
+        self.total_tokens_used = 0
+        self.compressions = 0
 
         self._init_memory()
 
@@ -43,56 +47,112 @@ class Player:
         prefix = "[系统通知] " if not is_private else "[私密信息] "
         self.memory.append({"role": "user", "content": f"{prefix}{message}"})
 
-    def _manage_memory(self):
-        if len(self.memory) <= 1:
-            return
-            
-        system_msg = self.memory[0]
-        recent_memory = self.memory[1:]
-        
-        # Get limits from config (safe fallback if config access is tricky, but client has config)
-        max_tokens = self.max_memory_tokens if self.max_memory_tokens is not None else getattr(self.llm_client.config, "max_memory_tokens", 2000)
-        
-        encoding = None
+    def _get_encoding(self):
         try:
-            encoding = tiktoken.get_encoding("cl100k_base")
+            return tiktoken.get_encoding("cl100k_base")
         except Exception:
             try:
-                encoding = tiktoken.get_encoding("gpt2")  # Fallback
+                return tiktoken.get_encoding("gpt2")
             except Exception:
-                encoding = None
+                return None
 
-        def count_tokens(msgs):
-            text = "".join(str(m.get("content", "")) for m in msgs)
-            if encoding is None:
-                # Offline-safe fallback: approximate tokens by word/character chunks.
-                chunks = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
-                return len(chunks)
-            return len(encoding.encode(text))
-            
-        # Always keep system prompt
-        current_tokens = count_tokens([system_msg])
-        
-        # Add recent messages until limit
+    def _count_tokens(self, msgs):
+        text = "".join(str(m.get("content", "")) for m in msgs)
+        enc = self._get_encoding()
+        if enc is None:
+            chunks = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+            return len(chunks)
+        return len(enc.encode(text))
+
+    def _get_max_tokens(self):
+        return self.max_memory_tokens if self.max_memory_tokens is not None else getattr(self.llm_client.config, "max_memory_tokens", 2000)
+
+    def _get_current_tokens(self):
+        return self._count_tokens(self.memory)
+
+    async def _emit_token_usage(self, last_call: int = 0):
+        if self.token_callback:
+            max_tokens = self._get_max_tokens()
+            current = self._get_current_tokens()
+            await self.token_callback(self.player_id, {
+                "current_tokens": current,
+                "max_tokens": max_tokens,
+                "percent": min(round(current / max_tokens * 100), 100) if max_tokens else 0,
+                "last_call_tokens": last_call,
+                "total_tokens_used": self.total_tokens_used,
+                "compressions": self.compressions,
+            })
+
+    async def _compress_memory(self, to_compress: List[Dict[str, str]]) -> str:
+        text = ""
+        for m in to_compress:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            text += f"[{role}]: {content}\n"
+
+        prompt = (
+            "请将以下对话历史压缩为一份简洁的摘要，用中文输出。\n"
+            "保留以下关键信息：已死亡玩家及身份、已验证的好人/狼人、各方核心观点、关键事件。\n"
+            "控制在200字以内。不要包含任何无关内容。\n\n"
+            f"{text}"
+        )
+        try:
+            summary = await self.llm_client.generate_response([
+                {"role": "system", "content": "你是一个对话摘要助手，请简洁地总结对话历史。"},
+                {"role": "user", "content": prompt},
+            ])
+            summary = summary.strip()
+            game_logger.log(f"玩家 {self.player_id} 上下文已压缩 ({len(to_compress)} 条 → 摘要)", "dim")
+            return summary
+        except Exception as e:
+            game_logger.log(f"玩家 {self.player_id} 上下文压缩失败: {e}", "yellow")
+            return ""
+
+    async def _manage_memory(self):
+        if len(self.memory) <= 1:
+            return
+
+        max_tokens = self._get_max_tokens()
+        total = self._get_current_tokens()
+        if total <= max_tokens:
+            return
+
+        system_msg = self.memory[0]
+        recent_memory = self.memory[1:]
+
         kept_msgs = []
+        current_tokens = self._count_tokens([system_msg])
+        dropped = []
+
         for msg in reversed(recent_memory):
-            msg_tokens = count_tokens([msg])
+            msg_tokens = self._count_tokens([msg])
             if current_tokens + msg_tokens > max_tokens:
-                break
-            kept_msgs.insert(0, msg)
-            current_tokens += msg_tokens
-            
-        if len(kept_msgs) < len(recent_memory):
-            # Log pruning only if significant
-            # game_logger.log(f"玩家 {self.player_id} 记忆修剪: {len(recent_memory)} -> {len(kept_msgs)} (Tokens: {current_tokens})", "dim")
-            pass
-            
+                dropped.insert(0, msg)
+            else:
+                kept_msgs.insert(0, msg)
+                current_tokens += msg_tokens
+
+        if dropped and len(dropped) >= 4:
+            private_msgs = [m for m in dropped if "私密信息" in m.get("content", "")]
+            public_dropped = [m for m in dropped if "私密信息" not in m.get("content", "")]
+            recent_msgs = kept_msgs[-6:] if len(kept_msgs) > 6 else kept_msgs
+            older_kept = kept_msgs[:-6] if len(kept_msgs) > 6 else []
+
+            to_compress = older_kept + public_dropped
+            if to_compress:
+                summary = await self._compress_memory(to_compress)
+                if summary:
+                    self.compressions += 1
+                    self.memory = [system_msg, {"role": "system", "content": f"[上下文摘要] {summary}"}] + private_msgs + recent_msgs
+                    return
+
         self.memory = [system_msg] + kept_msgs
 
     async def _generate_with_stream(self, prompt: str, prefix_log: str = "", use_stream_display: bool = True, response_format=None) -> str:
         self.memory.append({"role": "user", "content": prompt})
-        self._manage_memory()
+        await self._manage_memory()
 
+        tokens_before = self._get_current_tokens()
         full_response = ""
 
         if use_stream_display:
@@ -109,6 +169,10 @@ class Player:
             full_response = response
 
         self.memory.append({"role": "assistant", "content": response})
+        tokens_after = self._get_current_tokens()
+        call_tokens = max(tokens_after - tokens_before, 0)
+        self.total_tokens_used += call_tokens
+        await self._emit_token_usage(last_call=call_tokens)
         return response
 
     async def _generate_with_reasoning(self, prompt: str, use_stream_display: bool = True) -> str:
@@ -123,7 +187,9 @@ class Player:
 
         final_prompt = "基于以上的思考，请给出你最终的简短决策或发言（不要包含思考过程）："
         self.memory.append({"role": "user", "content": final_prompt})
+        await self._manage_memory()
 
+        tokens_before = self._get_current_tokens()
         full_response = ""
 
         if use_stream_display:
@@ -140,6 +206,10 @@ class Player:
             full_response = response
 
         self.memory.append({"role": "assistant", "content": response})
+        tokens_after = self._get_current_tokens()
+        call_tokens = max(tokens_after - tokens_before, 0)
+        self.total_tokens_used += call_tokens
+        await self._emit_token_usage(last_call=call_tokens)
         return response
 
     async def speak(

@@ -91,6 +91,9 @@ class GameEngine:
         async def on_thinking(pid, text):
             await self._emit("player_thinking", {"player_id": pid, "text": text})
 
+        async def on_token_usage(pid, usage):
+            await self._emit("token_usage", {"player_id": pid, **usage})
+
         player_roles = {}
         for i, role in enumerate(roles):
             player_id = i + 1
@@ -111,6 +114,7 @@ class GameEngine:
                 self.config.game.max_memory_tokens,
                 thinking_callback=on_thinking,
                 personality=personality,
+                token_callback=on_token_usage,
             )
             self.players[player_id] = player
             player_roles[player_id] = role.name
