@@ -77,6 +77,86 @@ models:
     is_reasoning: true
     json_mode: true
     disabled: false
+  - name: "DeepSeek9"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek10"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek11"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek12"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek13"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek14"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek15"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek16"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek17"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
+  - name: "DeepSeek18"
+    provider: "deepseek"
+    api_key: "env:DEEPSEEK_API_KEY"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v4-pro"
+    is_reasoning: true
+    json_mode: true
+    disabled: false
 
 judge_model:
   name: "Judge"
@@ -91,13 +171,14 @@ game:
   max_memory_tokens: 8000
   roles:
     # 推荐板子配置：
-    # 6人局: 2狼 1女 1预 2民 (默认)
-    # 7人局: 2狼 1女 1预 1猎 2民
-    # 9人局: 3狼 1女 1预 1猎 3民
-    # 10人局: 3狼 1女 1预 1猎 4民
+    # 8人局:  3狼 1女 1预 1猎 1守 1民 (默认)
+    # 12人局: 4狼 1女 1预 1猎 1守 1白 3民
+    # 16人局: 5狼 1女 1预 1猎 1守 1白 6民
+    # 20人局: 6狼 1女 1预 1猎 1守 1白 9民
     # 注意：请确保下方 models 列表中的模型数量 >= 角色总数
-    werewolf: 2
+    werewolf: 3
     witch: 1
     seer: 1
     hunter: 1
-    villager: 2
+    guard: 1
+    villager: 1
