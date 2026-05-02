@@ -7,9 +7,17 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "*.md"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "*.md"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
 
 jobs:
   backend:

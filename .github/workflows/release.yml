@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "src/**"
+      - "frontend/src/**"
+      - "frontend/package*.json"
+      - "frontend/vite.config.*"
+      - "frontend/index.html"
+      - "config/**"
+      - "requirements.txt"
+      - "main.py"
+      - "ai-werewolf.spec"
+      - "VERSION"
     tags:
       - "v*"
 
