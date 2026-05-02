@@ -4,6 +4,54 @@ import yaml
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 
+
+def _resolve_env_vars(data: dict) -> dict:
+    """Resolve env:VAR references in api_key fields in-place."""
+    for model in data.get("models", []):
+        if model.get("api_key", "").startswith("env:"):
+            env_var = model["api_key"].split(":", 1)[1]
+            model["api_key"] = os.getenv(env_var)
+    if "judge_model" in data:
+        judge = data["judge_model"]
+        if judge.get("api_key", "").startswith("env:"):
+            env_var = judge["api_key"].split(":", 1)[1]
+            judge["api_key"] = os.getenv(env_var)
+    return data
+
+
+def _validate_config(config: "AppConfig") -> "AppConfig":
+    """Validate model count and auto-disable extra models."""
+    active_models = get_active_models(config.models)
+    total_players = count_players(config.game.roles)
+
+    if len(active_models) < total_players:
+        raise ValueError(
+            f"Configuration Error: Not enough enabled models for {total_players} players. "
+            f"Active models: {len(active_models)}, Required: {total_players}."
+        )
+
+    if len(active_models) > total_players:
+        extra_count = len(active_models) - total_players
+        disabled_count = 0
+        auto_disabled_names = []
+        for i in range(len(config.models) - 1, -1, -1):
+            if not config.models[i].disabled:
+                config.models[i].disabled = True
+                auto_disabled_names.append(config.models[i].name)
+                disabled_count += 1
+                if disabled_count >= extra_count:
+                    break
+        if auto_disabled_names:
+            warnings.warn(
+                f"自动禁用了多余的模型（共 {len(auto_disabled_names)} 个）：{auto_disabled_names}。"
+                f"如需使用这些模型，请增加对应角色数量。",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    return config
+
+
 class ModelConfig(BaseModel):
     name: str
     provider: str = "openai"
@@ -46,22 +94,11 @@ def count_players(roles: RoleConfig) -> int:
 def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
-    
+
     with open(config_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    
-    # Process environment variables for API keys
-    for model in data.get("models", []):
-        if model.get("api_key", "").startswith("env:"):
-            env_var = model["api_key"].split(":", 1)[1]
-            model["api_key"] = os.getenv(env_var)
-            
-    # Process judge model
-    if "judge_model" in data:
-        judge = data["judge_model"]
-        if judge.get("api_key", "").startswith("env:"):
-            env_var = judge["api_key"].split(":", 1)[1]
-            judge["api_key"] = os.getenv(env_var)
+
+    _resolve_env_vars(data)
 
     missing_model_keys = []
     for model in data.get("models", []):
@@ -87,36 +124,4 @@ def load_config(config_path: str = "config/game_config.yaml") -> AppConfig:
             data.pop("judge_model", None)
 
     config = AppConfig(**data)
-    
-    # Validation logic
-    active_models = get_active_models(config.models)
-    total_players = count_players(config.game.roles)
-    
-    if len(active_models) < total_players:
-        raise ValueError(
-            f"Configuration Error: Not enough enabled models for {total_players} players. "
-            f"Active models: {len(active_models)}, Required: {total_players}."
-        )
-        
-    # Auto-disable extra models if needed
-    if len(active_models) > total_players:
-        extra_count = len(active_models) - total_players
-        # Disable the last N enabled models
-        disabled_count = 0
-        auto_disabled_names = []
-        for i in range(len(config.models) - 1, -1, -1):
-            if not config.models[i].disabled:
-                config.models[i].disabled = True
-                auto_disabled_names.append(config.models[i].name)
-                disabled_count += 1
-                if disabled_count >= extra_count:
-                    break
-        if auto_disabled_names:
-            warnings.warn(
-                f"自动禁用了多余的模型（共 {len(auto_disabled_names)} 个）：{auto_disabled_names}。"
-                f"如需使用这些模型，请增加对应角色数量。",
-                UserWarning,
-                stacklevel=2,
-            )
-                    
-    return config
+    return _validate_config(config)
