@@ -170,7 +170,9 @@ class Player:
 
         self.memory.append({"role": "assistant", "content": response})
         tokens_after = self._get_current_tokens()
-        call_tokens = max(tokens_after - tokens_before, 0)
+        output_tokens = max(tokens_after - tokens_before, 0)
+        input_tokens = self._count_tokens([{"role": "user", "content": prompt}])
+        call_tokens = input_tokens + output_tokens
         self.total_tokens_used += call_tokens
         await self._emit_token_usage(last_call=call_tokens)
         return response
@@ -207,7 +209,9 @@ class Player:
 
         self.memory.append({"role": "assistant", "content": response})
         tokens_after = self._get_current_tokens()
-        call_tokens = max(tokens_after - tokens_before, 0)
+        output_tokens = max(tokens_after - tokens_before, 0)
+        input_tokens = self._count_tokens([{"role": "user", "content": final_prompt}])
+        call_tokens = input_tokens + output_tokens
         self.total_tokens_used += call_tokens
         await self._emit_token_usage(last_call=call_tokens)
         return response
