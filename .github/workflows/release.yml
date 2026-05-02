@@ -4,8 +4,19 @@ on:
   push:
     branches:
       - main
-  release:
-    types: [published]
+    paths:
+      - "src/**"
+      - "frontend/src/**"
+      - "frontend/package*.json"
+      - "frontend/vite.config.*"
+      - "frontend/index.html"
+      - "config/**"
+      - "requirements.txt"
+      - "main.py"
+      - "ai-werewolf.spec"
+      - "VERSION"
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -65,7 +76,9 @@ jobs:
           path: dist/${{ matrix.artifact }}
 
       - name: Upload to Release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/${{ matrix.artifact }}
+          draft: false
+          generate_release_notes: true

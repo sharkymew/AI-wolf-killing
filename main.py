@@ -1,12 +1,31 @@
 import typer
 import webbrowser
+from pathlib import Path
 from typing import Optional
 from src.utils.config import load_config
 from src.core.game import GameEngine
 from src.utils.logger import game_logger
 from dotenv import load_dotenv
 
+def _get_version():
+    vf = Path(__file__).parent / "VERSION"
+    if vf.exists():
+        return vf.read_text().strip()
+    return "0.0.0"
+
+def _version_callback(value: bool):
+    if value:
+        print(f"AI-Werewolf v{_get_version()}")
+        raise typer.Exit()
+
 app = typer.Typer()
+
+@app.callback()
+def main(
+    version: bool = typer.Option(False, "--version", "-v", callback=_version_callback, is_eager=True,
+                                  help="Show version and exit"),
+):
+    pass
 
 
 @app.command()
