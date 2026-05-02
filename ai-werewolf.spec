@@ -8,6 +8,7 @@ block_cipher = None
 added_files = [
     ("frontend/dist", "frontend/dist"),
     ("config", "config"),
+    ("VERSION", "."),
 ]
 
 a = Analysis(
