@@ -25,3 +25,4 @@ frontend/dist/
 .trae/
 .vscode/
 .idea/
+frontend/.vite/deps/_metadata.json
