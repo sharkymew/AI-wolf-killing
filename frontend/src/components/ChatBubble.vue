@@ -11,6 +11,9 @@
         <span v-if="player.compressions" class="compress-tag">压缩×{{ player.compressions }}</span>
       </div>
       <div class="speech-text">{{ speech }}</div>
+      <div v-if="interaction" class="interaction-badge" :class="interaction.type">
+        {{ interaction.type === 'flower' ? '🌹' : '🍅' }} → 玩家 {{ interaction.to_id }}
+      </div>
       <div v-if="thinking" class="thinking-section">
         <div class="thinking-toggle" @click="thinkingOpen = !thinkingOpen">
           {{ thinkingOpen ? '▼' : '▶' }} 思考过程
@@ -39,6 +42,7 @@ const props = defineProps({
   player: Object,
   speech: String,
   thinking: String,
+  interaction: Object,
 })
 
 const thinkingOpen = ref(false)
@@ -120,6 +124,15 @@ function formatTokens(n) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.interaction-badge {
+  margin-top: 6px;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  display: inline-block;
+}
+.interaction-badge.flower { background: #1a2a10; color: #4caf50; }
+.interaction-badge.tomato { background: #2a1010; color: #e74c3c; }
 .thinking-section { margin-top: 8px; }
 .thinking-toggle {
   font-size: 12px;

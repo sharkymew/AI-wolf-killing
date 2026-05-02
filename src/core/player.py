@@ -265,16 +265,33 @@ class Player:
             remaining_good = max(alive_good - alive_wolves, 0)
             status_str += f"【狼人情报】再击杀{remaining_good}名好人即可达到人数优势胜利。\n"
 
-        prompt = f"{facts_str}{status_str}现在是白天讨论阶段。\n上下文：{context}{advice}\n请发表你的观点（100字以内）："
+        prompt = (
+            f"{facts_str}{status_str}现在是白天讨论阶段。\n上下文：{context}{advice}"
+            "请发表你的观点（100字以内）。\n"
+            "你可以在发言末尾用 [🌹玩家N] 表示送花（信任某人），或用 [🍅玩家N] 表示扔西红柿（怀疑某人）。每轮最多一次。\n"
+            "示例：我认为3号发言有道理，值得信任。 [🌹3]"
+        )
         
         try:
             if getattr(self.llm_client.config, "is_reasoning", False):
-                return await self._generate_with_reasoning(prompt)
-            # Normal stream
-            return await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
+                speech = await self._generate_with_reasoning(prompt)
+            else:
+                speech = await self._generate_with_stream(prompt, f"玩家 {self.player_id}: ")
         except Exception as e:
             game_logger.log(f"[dim]玩家 {self.player_id} LLM发言调用失败: {e}[/dim]", "red")
             return "（发言失败）"
+
+        import re as _re
+        match = _re.search(r"\[([\U0001f339\U0001f345])(\d+)\]", speech)
+        if match:
+            emoji = match.group(1)
+            target = int(match.group(2))
+            inter_type = "flower" if "🌹" in emoji else "tomato"
+            self.last_interaction = {"type": inter_type, "target": target}
+            speech = _re.sub(r"\s*\[[\U0001f339\U0001f345]\d+\]\s*$", "", speech).strip()
+        else:
+            self.last_interaction = None
+        return speech
 
     async def act(self, action_type: str, options: List[int], public_facts: List[str] = []) -> str:
         """Generate a game action (vote, kill, verify, etc.)."""

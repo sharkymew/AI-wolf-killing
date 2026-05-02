@@ -94,6 +94,40 @@ class ConfigTests(unittest.TestCase):
         active = get_active_models(config.models)
         self.assertEqual(len(active), 2)
 
+    def test_guard_and_idiot_fields_parsed(self):
+        data = {
+            "models": [
+                {"name": "M1", "provider": "mock", "model": "mock-model"},
+                {"name": "M2", "provider": "mock", "model": "mock-model"},
+                {"name": "M3", "provider": "mock", "model": "mock-model"},
+                {"name": "M4", "provider": "mock", "model": "mock-model"},
+                {"name": "M5", "provider": "mock", "model": "mock-model"},
+                {"name": "M6", "provider": "mock", "model": "mock-model"},
+            ],
+            "game": {
+                "roles": {
+                    "werewolf": 2, "witch": 1, "seer": 1,
+                    "hunter": 0, "guard": 1, "idiot": 0, "villager": 1
+                }
+            }
+        }
+        path = self._write_config(data)
+        config = load_config(path)
+        self.assertEqual(config.game.roles.guard, 1)
+        self.assertEqual(config.game.roles.idiot, 0)
+        self.assertEqual(count_players(config.game.roles), 6)
+
+    def test_count_players_sums_all_roles(self):
+        from src.utils.config import RoleConfig
+        rc = RoleConfig(werewolf=2, witch=1, seer=1, hunter=1, guard=1, idiot=1, villager=3)
+        self.assertEqual(count_players(rc), 10)
+
+    def test_invalid_role_key_skipped(self):
+        from src.core.role import create_roles_from_counts
+        roles, unknown = create_roles_from_counts({"invalid_role": 1, "werewolf": 2})
+        self.assertIn("invalid_role", unknown)
+        self.assertEqual(len(roles), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
