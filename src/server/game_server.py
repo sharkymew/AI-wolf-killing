@@ -1,8 +1,13 @@
 import asyncio
 import json
+import os
+import sys
+from pathlib import Path
 from typing import List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from src.utils.config import load_config
 from src.core.game import GameEngine
 from src.utils.logger import game_logger
@@ -15,6 +20,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve frontend static files
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parents[2]
+
+FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
+if FRONTEND_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(FRONTEND_DIR / "index.html")
 
 
 class ConnectionManager:
