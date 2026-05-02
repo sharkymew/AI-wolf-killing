@@ -80,7 +80,7 @@ class GameEngine:
         judge_client = None
         if judge_config:
             if judge_config.provider == "mock":
-                 judge_client = MockLLMClient(judge_config)
+                judge_client = MockLLMClient(judge_config)
             else:
                  judge_client = LLMClient(judge_config)
         
@@ -275,9 +275,9 @@ class GameEngine:
                 target = int(resp)
                 if target in valid_targets:
                     return wolf.player_id, target
+                game_logger.log(f"狼人 {wolf.player_id} 选择了无效目标 {target}，已跳过。", "dim")
             except (ValueError, TypeError):
-                pass
-            game_logger.log(f"狼人 {wolf.player_id} 选择失败，已跳过。", "dim")
+                game_logger.log(f"狼人 {wolf.player_id} 响应解析失败，已跳过。", "dim")
             return wolf.player_id, None
 
         # Build known info context
@@ -639,6 +639,7 @@ class GameEngine:
                         pk_speeches.append((pid, statement))
                     
                     for pid, statement in pk_speeches:
+                        await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "pk_speech"})
                         self.broadcast(f"玩家 {pid} (PK发言): {statement}")
                     
                     # PK Voting
