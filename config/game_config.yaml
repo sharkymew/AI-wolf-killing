@@ -168,7 +168,7 @@ judge_model:
 
 game:
   max_turns: 100
-  max_memory_tokens: 8000
+  max_memory_tokens: 80000
   roles:
     # 推荐板子配置：
     # 8人局:  3狼 1女 1预 1猎 1守 1民 (默认)
@@ -176,9 +176,9 @@ game:
     # 16人局: 5狼 1女 1预 1猎 1守 1白 6民
     # 20人局: 6狼 1女 1预 1猎 1守 1白 9民
     # 注意：请确保下方 models 列表中的模型数量 >= 角色总数
-    werewolf: 3
+    werewolf: 6
     witch: 1
     seer: 1
     hunter: 1
     guard: 1
-    villager: 1
+    villager: 9
