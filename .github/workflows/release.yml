@@ -22,22 +22,31 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+
   build:
+    needs: create-release
+    if: ${{ always() && !cancelled() }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             artifact: AI-Werewolf-linux
             binary: AI-Werewolf
-            make_release: true
           - os: macos-latest
             artifact: AI-Werewolf-macos
             binary: AI-Werewolf
-            make_release: false
           - os: windows-latest
             artifact: AI-Werewolf-windows
             binary: AI-Werewolf.exe
-            make_release: false
 
     runs-on: ${{ matrix.os }}
 
@@ -87,5 +96,3 @@ jobs:
         with:
           files: dist/${{ matrix.artifact }}
           draft: false
-          make_latest: ${{ matrix.make_release }}
-          generate_release_notes: ${{ matrix.make_release }}
