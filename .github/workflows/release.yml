@@ -29,12 +29,15 @@ jobs:
           - os: ubuntu-latest
             artifact: AI-Werewolf-linux
             binary: AI-Werewolf
+            make_release: true
           - os: macos-latest
             artifact: AI-Werewolf-macos
             binary: AI-Werewolf
+            make_release: false
           - os: windows-latest
             artifact: AI-Werewolf-windows
             binary: AI-Werewolf.exe
+            make_release: false
 
     runs-on: ${{ matrix.os }}
 
@@ -84,4 +87,5 @@ jobs:
         with:
           files: dist/${{ matrix.artifact }}
           draft: false
-          generate_release_notes: true
+          make_latest: ${{ matrix.make_release }}
+          generate_release_notes: ${{ matrix.make_release }}
