@@ -25,4 +25,5 @@ frontend/dist/
 .trae/
 .vscode/
 .idea/
-frontend/.vite/deps/_metadata.json
+frontend/.vite/
+package-lock.json
