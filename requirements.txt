@@ -8,4 +8,3 @@ tiktoken>=0.7.0
 httpx[socks]>=0.25.0
 fastapi>=0.100.0
 uvicorn[standard]>=0.30.0
-pyinstaller>=6.0.0
