@@ -556,7 +556,15 @@ class GameEngine:
                 alive_wolves=alive_wolves,
                 alive_good=alive_good,
             )
-            await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "discussion"})
+            interaction = None
+            if p.last_interaction:
+                interaction = {
+                    "from_id": pid,
+                    "to_id": p.last_interaction["target"],
+                    "type": p.last_interaction["type"],
+                }
+                await self._emit("player_interaction", interaction)
+            await self._emit("day_speech", {"player_id": pid, "statement": statement, "type": "discussion", "interaction": interaction})
             self.broadcast(f"玩家 {pid}: {statement}")
 
         if self.check_win_condition():

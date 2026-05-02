@@ -67,10 +67,10 @@ function addBanner(type, text) {
   messages.value.push({ type: 'banner', bannerType: type, text })
 }
 
-function addSpeech(player, speech) {
+function addSpeech(player, speech, interaction = null) {
   const thinking = pendingThinking[player.id]
   delete pendingThinking[player.id]
-  messages.value.push({ type: 'speech', player, speech, thinking: thinking || '' })
+  messages.value.push({ type: 'speech', player, speech, thinking: thinking || '', interaction })
 }
 
 function addRawEvent(type, message) {
@@ -163,7 +163,7 @@ function handleEvent(type, data) {
 
     case 'day_speech': {
       const p = players.value.find(p => p.id === data.player_id)
-      if (p) addSpeech(p, data.statement)
+      if (p) addSpeech(p, data.statement, data.interaction)
       addRawEvent('speech', `玩家${data.player_id}: ${data.statement}`)
       break
     }

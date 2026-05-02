@@ -62,5 +62,36 @@ class TestSpeak(unittest.IsolatedAsyncioTestCase):
         self.assertIn("我是好人", result)
 
 
+class TestInteraction(unittest.IsolatedAsyncioTestCase):
+    async def _make_and_speak(self, response):
+        mock_client = MagicMock()
+        mock_client.config = MagicMock()
+        mock_client.config.is_reasoning = False
+        mock_client.config.json_mode = False
+        mock_client.config.max_memory_tokens = 2000
+        mock_client.generate_response = AsyncMock(return_value=response)
+        p = Player(1, Villager(), mock_client, "mock")
+        speech = await p.speak("讨论", turn=1, alive_count=5)
+        return p, speech
+
+    async def test_speak_with_flower(self):
+        p, speech = await self._make_and_speak("我认为3号很可信。 [🌹3]")
+        self.assertEqual(speech, "我认为3号很可信。")
+        self.assertIsNotNone(p.last_interaction)
+        self.assertEqual(p.last_interaction["type"], "flower")
+        self.assertEqual(p.last_interaction["target"], 3)
+
+    async def test_speak_with_tomato(self):
+        p, speech = await self._make_and_speak("5号发言可疑 [🍅5]")
+        self.assertEqual(speech, "5号发言可疑")
+        self.assertEqual(p.last_interaction["type"], "tomato")
+        self.assertEqual(p.last_interaction["target"], 5)
+
+    async def test_speak_without_interaction(self):
+        p, speech = await self._make_and_speak("我觉得大家都还行。")
+        self.assertEqual(speech, "我觉得大家都还行。")
+        self.assertIsNone(p.last_interaction)
+
+
 if __name__ == "__main__":
     unittest.main()
