@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+from pathlib import Path
 from typing import List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,14 +9,57 @@ from src.utils.config import load_config
 from src.core.game import GameEngine
 from src.utils.logger import game_logger
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_DIR = PROJECT_ROOT / "config"
+
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+
+def get_allowed_origins() -> List[str]:
+    raw = os.getenv("AI_WEREWOLF_ALLOWED_ORIGINS")
+    if not raw:
+        return DEFAULT_ALLOWED_ORIGINS
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+ALLOWED_ORIGINS = get_allowed_origins()
+
 app = FastAPI(title="AI Werewolf Game")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def is_allowed_origin(origin: str | None) -> bool:
+    return bool(origin and origin in ALLOWED_ORIGINS)
+
+
+def resolve_server_config_path(config_path: str) -> Path:
+    """Resolve a websocket-supplied config path under the trusted config dir."""
+    requested = Path(config_path)
+    if requested.is_absolute():
+        raise ValueError("Config path must be relative to the project config directory.")
+
+    if requested.parts and requested.parts[0] == "config":
+        requested = Path(*requested.parts[1:])
+
+    resolved = (CONFIG_DIR / requested).resolve()
+    if CONFIG_DIR.resolve() not in (resolved, *resolved.parents):
+        raise ValueError("Config path escapes the project config directory.")
+
+    if resolved.suffix not in {".yaml", ".yml"}:
+        raise ValueError("Config file must be a YAML file.")
+
+    return resolved
 
 
 class ConnectionManager:
@@ -26,7 +71,8 @@ class ConnectionManager:
         self.connections.append(ws)
 
     def disconnect(self, ws: WebSocket):
-        self.connections.remove(ws)
+        if ws in self.connections:
+            self.connections.remove(ws)
 
     async def broadcast(self, event_type: str, data: dict):
         message = json.dumps({"type": event_type, "data": data}, ensure_ascii=False)
@@ -51,6 +97,10 @@ async def game_event_handler(event_type: str, data: dict):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     global current_game_task
+    if not is_allowed_origin(ws.headers.get("origin")):
+        await ws.close(code=1008)
+        return
+
     await manager.connect(ws)
     try:
         while True:
@@ -70,7 +120,7 @@ async def websocket_endpoint(ws: WebSocket):
 
 async def run_game(config_path: str):
     try:
-        config = load_config(config_path)
+        config = load_config(str(resolve_server_config_path(config_path)))
         engine = GameEngine(config, on_event=game_event_handler)
         await engine.run()
         game_logger.log("Game finished.", "green")
