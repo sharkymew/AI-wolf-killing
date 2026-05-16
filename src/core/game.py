@@ -47,6 +47,8 @@ class GameEngine:
         for model in safe_config.get("models", []):
             if "api_key" in model:
                 model["api_key"] = "***"
+        if safe_config.get("judge_model") and "api_key" in safe_config["judge_model"]:
+            safe_config["judge_model"]["api_key"] = "***"
 
         with open(filename, "w", encoding="utf-8") as f:
             json.dump({
