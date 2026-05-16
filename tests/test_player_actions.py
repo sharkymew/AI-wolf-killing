@@ -44,6 +44,9 @@ class TestActParsing(unittest.IsolatedAsyncioTestCase):
         p = Player(1, Villager(), mock_client, "mock")
         result = await p.act("投票", [2, 3, 4])
         self.assertEqual(result, "3")
+        mock_client.generate_response.assert_awaited()
+        _, kwargs = mock_client.generate_response.await_args
+        self.assertEqual(kwargs["response_format"], {"type": "json_object"})
 
     async def test_invalid_input_returns_minus_one(self):
         # Mock returns garbage that can't be parsed to int
